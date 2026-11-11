@@ -12,7 +12,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p fixtures/sample-app",
     "lint": "eslint .",
     "test": "vitest run",
     "test:compat": "npm run compat:install && vitest run --config vitest.compat.config.ts",

@@ -1,3 +1,14 @@
+export type ScopeKind = 'changed' | 'enclosing-function' | 'deletion-expanded';
+
+export interface ScopeRange {
+  /** Repo-relative path with forward slashes. */
+  readonly file: string;
+  readonly startLine: number;
+  readonly endLine: number;
+  readonly kind: ScopeKind;
+  readonly staticRegion: boolean;
+}
+
 export type DeadlineMechanism = 'signal' | 'socket-timeout' | 'manual-destroy';
 
 export type AbortKind = 'timeout' | 'abort';
