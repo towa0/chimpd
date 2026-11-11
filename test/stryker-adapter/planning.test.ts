@@ -6,6 +6,8 @@ import { PRESETS, type ScopeRange } from '../../src/core/index.js';
 import {
   buildStrykerOptions,
   decideChecker,
+  escapeGlob,
+  findTargetConfig,
   mutatePatterns,
   planBatches,
   resolveCheckerTypeScript,
@@ -65,14 +67,39 @@ describe('batch planning', () => {
   });
 });
 
+describe('glob escaping', () => {
+  it('wraps each glob metacharacter in a bracket class and leaves plain paths alone', () => {
+    expect(escapeGlob('src/plain-file.ts')).toBe('src/plain-file.ts');
+    expect(escapeGlob('src/prijsberekening-é.ts')).toBe('src/prijsberekening-é.ts');
+    expect(escapeGlob('src/[id] (copy) {x}.ts')).toBe('src/[[]id[]] [(]copy[)] [{]x[}].ts');
+    expect(escapeGlob('src/what?*.ts')).toBe('src/what[?][*].ts');
+  });
+});
+
+describe('target Stryker config', () => {
+  it('is found under every name Stryker would load', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'chimpd-config-'));
+    try {
+      expect(findTargetConfig(dir)).toBeNull();
+      for (const name of ['.stryker.conf.cjs', 'stryker.config.mjs', 'stryker.conf.json']) {
+        fs.writeFileSync(path.join(dir, name), '');
+      }
+      expect(findTargetConfig(dir)).toBe('stryker.conf.json');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('stryker options', () => {
   const [batch] = planBatches([range('src/discount.ts', 2, 2)], 1);
   if (batch === undefined) throw new Error('expected one batch');
-  const input = { batch, ignoreStatic: true, checkerEnabled: true, pluginPath: '/plugin.js' };
+  const input = { batch, ignoreStatic: true, checkerEnabled: true, pluginPath: '/plugin.js', configFile: '/target/.chimpd/stryker.config.json' };
 
   it('keeps every Stryker artifact inside .chimpd and writes no reports', () => {
     const options = buildStrykerOptions({ ...input, preset: PRESETS[1] });
     expect(options).toMatchObject({
+      configFile: '/target/.chimpd/stryker.config.json',
       tempDirName: '.chimpd/stryker-tmp',
       cleanTempDir: 'always',
       ignorePatterns: ['.chimpd'],
@@ -84,6 +111,7 @@ describe('stryker options', () => {
       testRunner: 'vitest',
       checkers: ['typescript'],
       ignoreStatic: true,
+      disableBail: true,
       mutate: ['src/discount.ts:2-2'],
     });
   });
@@ -132,6 +160,7 @@ describe('outcome resolution', () => {
     coveredBy: [],
     killedBy: [],
     static: false,
+    testsCompleted: null,
   });
 
   it('keeps streamed results and marks the rest as not tested for budget', () => {

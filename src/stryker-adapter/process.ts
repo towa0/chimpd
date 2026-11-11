@@ -24,6 +24,15 @@ export function workerPath(): string {
   return fileURLToPath(new URL(`./worker.${extension}`, import.meta.url));
 }
 
+// Only the uncompiled worker needs this, and only on Node versions that strip types behind a flag.
+// The variable reaches Stryker's own child processes, which load the same file as a plugin.
+function workerEnvironment(entry: string): NodeJS.ProcessEnv {
+  const stripsTypes = (process.features as { typescript?: unknown }).typescript;
+  if (!entry.endsWith('.ts') || stripsTypes) return process.env;
+  const existing = process.env.NODE_OPTIONS ?? '';
+  return { ...process.env, NODE_OPTIONS: `${existing} --experimental-strip-types`.trim() };
+}
+
 // Stryker runs its test runners and checkers in processes of its own, so the whole tree has to go.
 function killTree(child: ChildProcess): void {
   if (child.pid === undefined) return;
@@ -41,9 +50,11 @@ function killTree(child: ChildProcess): void {
 export function runWorker(request: WorkerRequest): Promise<WorkerRun> {
   const startedAt = realNow();
   return new Promise((resolve) => {
-    const child = fork(request.entry ?? workerPath(), [], {
+    const entry = request.entry ?? workerPath();
+    const child = fork(entry, [], {
       cwd: request.cwd,
       execArgv: [],
+      env: workerEnvironment(entry),
       // A process group of its own lets one signal reach every descendant on POSIX.
       detached: process.platform !== 'win32',
       stdio: ['ignore', 'ignore', 'pipe', 'ipc'],

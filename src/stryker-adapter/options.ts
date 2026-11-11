@@ -10,6 +10,8 @@ export interface OptionsInput {
   readonly ignoreStatic: boolean;
   readonly checkerEnabled: boolean;
   readonly pluginPath: string;
+  /** An empty config file; naming it stops Stryker from discovering the target's own. */
+  readonly configFile: string;
   readonly concurrency?: number;
   readonly vitestConfigFile?: string;
 }
@@ -20,7 +22,8 @@ type LogLevel = NonNullable<StrykerOptions['logLevel']>;
 const LOG_OFF = 'off' as LogLevel;
 
 export function buildStrykerOptions(input: OptionsInput): StrykerOptions {
-  return {
+  const options: StrykerOptions & { configFile: string } = {
+    configFile: input.configFile,
     mutate: mutatePatterns(input.batch),
     mutator: { excludedMutations: excludedMutators(input.preset) },
     testRunner: 'vitest',
@@ -28,6 +31,8 @@ export function buildStrykerOptions(input: OptionsInput): StrykerOptions {
     checkers: input.checkerEnabled ? ['typescript'] : [],
     coverageAnalysis: 'perTest',
     ignoreStatic: input.ignoreStatic,
+    // With bail, the one test recorded as the killer depends on the order Vitest happens to run files in.
+    disableBail: true,
     reporters: [STREAM_REPORTER],
     appendPlugins: [input.pluginPath],
     tempDirName: STRYKER_TEMP_DIR,
@@ -39,4 +44,5 @@ export function buildStrykerOptions(input: OptionsInput): StrykerOptions {
     allowConsoleColors: false,
     ...(input.concurrency === undefined ? {} : { concurrency: input.concurrency }),
   };
+  return options;
 }

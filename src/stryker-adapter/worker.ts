@@ -17,6 +17,7 @@ export interface WireMutant {
   readonly coveredBy: readonly string[];
   readonly killedBy: readonly string[];
   readonly static: boolean;
+  readonly testsCompleted: number | null;
 }
 
 export interface WireTest {
@@ -74,6 +75,7 @@ function toWire(mutant: PlanEvent['mutantPlans'][number]['mutant']): WireMutant 
     coveredBy: mutant.coveredBy ?? [],
     killedBy: mutant.killedBy ?? [],
     static: mutant.static ?? false,
+    testsCompleted: mutant.testsCompleted ?? null,
   };
 }
 

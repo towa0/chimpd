@@ -58,7 +58,12 @@ export interface DiffScope {
 
 export const DEFAULT_BASE = 'origin/main';
 
-const KIND_ORDER: Record<ScopeKind, number> = { changed: 0, 'enclosing-function': 1, 'deletion-expanded': 2 };
+const KIND_ORDER: Record<ScopeKind, number> = {
+  changed: 0,
+  'enclosing-function': 1,
+  'deletion-expanded': 2,
+  'test-boundary': 3,
+};
 
 interface Candidate {
   readonly file: string;

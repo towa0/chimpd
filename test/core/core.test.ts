@@ -116,7 +116,7 @@ describe('presets', () => {
 });
 
 describe('ignoreStatic decision', () => {
-  const base = { staticRegionLines: 4, fullSuiteMs: 1000, mutationBudgetMs: 390_000 };
+  const base = { staticRegionLines: 4, baselineMs: 1000, mutationBudgetMs: 390_000 };
 
   it('always ignores static mutants at Poke and Prod', () => {
     expect(decideIgnoreStatic({ ...base, intensity: 1 }).ignoreStatic).toBe(true);
@@ -128,7 +128,7 @@ describe('ignoreStatic decision', () => {
       ignoreStatic: false,
       reason: 'static mutants fit the budget',
     });
-    expect(decideIgnoreStatic({ ...base, intensity: 3, staticRegionLines: 20, fullSuiteMs: 1625 }).ignoreStatic).toBe(false);
+    expect(decideIgnoreStatic({ ...base, intensity: 3, staticRegionLines: 20, baselineMs: 1625 }).ignoreStatic).toBe(false);
   });
 
   it('ignores them at Shake above 20 static lines', () => {
@@ -138,7 +138,7 @@ describe('ignoreStatic decision', () => {
   });
 
   it('ignores them at Shake when the estimate exceeds a quarter of the mutation budget', () => {
-    const decision = decideIgnoreStatic({ ...base, intensity: 3, staticRegionLines: 20, fullSuiteMs: 1626 });
+    const decision = decideIgnoreStatic({ ...base, intensity: 3, staticRegionLines: 20, baselineMs: 1626 });
     expect(decision.ignoreStatic).toBe(true);
     expect(decision.reason).toContain('97560 ms');
   });
@@ -156,6 +156,7 @@ describe('prior', () => {
     expect(priorOf('src/report.ts')).toBe(0);
     expect(priorOf('src/userRepository.ts')).toBe(10);
     expect(priorOf('src/db/saveInvoice.ts')).toBe(25);
+    expect(priorOf('src/db/saveInvoice.ts', 'updateRefundBalance', 'authToken')).toBe(25);
   });
 });
 

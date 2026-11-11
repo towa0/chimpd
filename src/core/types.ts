@@ -4,7 +4,7 @@ export type ScopeMode = 'changed-lines' | 'enclosing-functions';
 
 export type FaultKind = 'blackhole' | 'http-500' | 'malformed-json' | 'connection-refused';
 
-export type ScopeKind = 'changed' | 'enclosing-function' | 'deletion-expanded';
+export type ScopeKind = 'changed' | 'enclosing-function' | 'deletion-expanded' | 'test-boundary';
 
 export interface ScopeRange {
   /** Repo-relative path with forward slashes. */

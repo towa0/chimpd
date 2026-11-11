@@ -54,11 +54,37 @@ describe('stryker adapter on the sample app', () => {
           scopeKind: 'changed',
         }),
       ]);
-      expect(first.mutants.map((mutant) => mutant.status)).toEqual(['Killed', 'Killed', 'Killed', 'Survived']);
+      expect(first.mutants.map((mutant) => [mutant.replacement, mutant.status, mutant.statusReason, mutant.killedBy])).toEqual([
+        [
+          'false',
+          'Killed',
+          null,
+          [
+            'test/checkout.test.ts#returns the discounted total',
+            'test/discount.test.ts#discount > applies the discount to the total',
+            'test/discount.test.ts#discount > gives ten percent on large orders',
+          ],
+        ],
+        ['true', 'Killed', null, ['test/discount.test.ts#discount > gives no discount on small orders']],
+        [
+          'orderTotal < 120',
+          'Killed',
+          null,
+          [
+            'test/checkout.test.ts#returns the discounted total',
+            'test/discount.test.ts#discount > applies the discount to the total',
+            'test/discount.test.ts#discount > gives no discount on small orders',
+            'test/discount.test.ts#discount > gives ten percent on large orders',
+          ],
+        ],
+        ['orderTotal > 120', 'Survived', null, []],
+      ]);
       expect(first.mutants.every((mutant) => /^[0-9a-f]{64}$/.test(mutant.sourceHash))).toBe(true);
       expect(first.notTested).toEqual({ reason: 'budget', mutants: 0, unplannedFiles: [] });
       expect(first.checker).toMatchObject({ enabled: true, typescriptVersion: '6.0.3' });
       expect(first.strykerVersion).toBe('10.1.1');
+      expect(first.targetConfigIgnored).toBeNull();
+      expect(first.excludedByPreset).toBe(0);
 
       const survivor = first.mutants.find((mutant) => mutant.status === 'Survived');
       expect(survivor?.coveredBy).toEqual([
@@ -104,6 +130,72 @@ describe('stryker adapter on the sample app', () => {
         expect(mutant.scopeKind, key(mutant)).toBe(mutant.start.line === line ? 'changed' : 'enclosing-function');
       }
       expect(new Set(result.mutants.map((mutant) => mutant.scopeKind))).toEqual(new Set(['changed', 'enclosing-function']));
+      expect(result.mutants.filter((mutant) => mutant.status === 'Survived').map((mutant) => mutant.replacement)).toContain(
+        'orderTotal > 120',
+      );
+    },
+    RUN_TIMEOUT_MS,
+  );
+
+  it(
+    'ignores the target Stryker config, survives a type error, and mutates oddly named files',
+    async () => {
+      const app = sampleApp();
+      history.boundaryChange(app);
+      app.write(
+        'stryker.config.json',
+        JSON.stringify({
+          reporters: ['html', 'json', 'clear-text'],
+          incremental: true,
+          thresholds: { high: 100, low: 100, break: 100 },
+          mutate: ['src/**/*.ts'],
+          tempDirName: 'target-tmp',
+        }),
+      );
+      app.write('src/broken.ts', "export const broken: number = 'not a number';\n");
+      app.write('src/[id] (copy) {x}.ts', 'export function weird(value: number): boolean {\n  return value > 3;\n}\n');
+      app.write(
+        'test/weird.test.ts',
+        [
+          "import { expect, it } from 'vitest';",
+          "import { weird } from '../src/[id] (copy) {x}.js';",
+          '',
+          "it('is weird', () => {",
+          '  expect(weird(5)).toBe(true);',
+          '});',
+          '',
+        ].join('\n'),
+      );
+      app.commit('Add a Stryker config, a type error, and an oddly named file');
+      const exitCodeBefore = process.exitCode;
+
+      const result = await mutate(app, 1);
+
+      expect(result.targetConfigIgnored).toBe('stryker.config.json');
+      expect(result.batches).toMatchObject([{ outcome: 'completed', error: null }]);
+      expect(result.batches[0]?.files).toEqual(['src/[id] (copy) {x}.ts', 'src/broken.ts', 'src/discount.ts']);
+      expect(process.exitCode).toBe(exitCodeBefore);
+      for (const leftover of ['reports', 'target-tmp', '.stryker-tmp', 'stryker.log']) {
+        expect(fs.existsSync(path.join(app.dir, leftover)), leftover).toBe(false);
+      }
+      expect(fs.readdirSync(path.join(app.dir, '.chimpd')).sort()).toEqual(['.gitignore']);
+      expect(app.git('status', '--porcelain')).toBe('');
+
+      expect(result.checker).toMatchObject({
+        enabled: false,
+        reason: "type checker disabled: target does not type-check under chimpd's TypeScript 6.0.3",
+      });
+
+      const weird = result.mutants.filter((mutant) => mutant.file === 'src/[id] (copy) {x}.ts');
+      expect(weird.map((mutant) => [mutant.start.line, mutant.replacement, mutant.status])).toEqual([
+        [1, '{}', 'Killed'],
+        [2, 'false', 'Killed'],
+        [2, 'true', 'Survived'],
+        [2, 'value <= 3', 'Killed'],
+        [2, 'value >= 3', 'Survived'],
+      ]);
+      expect(result.mutants.filter((mutant) => mutant.file === 'src/broken.ts')).toEqual([]);
+      expect(result.excludedByPreset).toBe(1);
       expect(result.mutants.filter((mutant) => mutant.status === 'Survived').map((mutant) => mutant.replacement)).toContain(
         'orderTotal > 120',
       );

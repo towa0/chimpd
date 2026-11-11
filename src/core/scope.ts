@@ -5,7 +5,12 @@ export interface LineInterval {
   readonly endLine: number;
 }
 
-const KIND_RANK: Record<ScopeKind, number> = { changed: 0, 'enclosing-function': 1, 'deletion-expanded': 2 };
+const KIND_RANK: Record<ScopeKind, number> = {
+  changed: 0,
+  'enclosing-function': 1,
+  'deletion-expanded': 2,
+  'test-boundary': 3,
+};
 
 /** Unions the ranges of each file into disjoint intervals, so no line is listed twice. */
 export function mergeRangesByFile(ranges: readonly ScopeRange[]): Map<string, LineInterval[]> {

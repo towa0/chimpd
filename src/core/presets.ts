@@ -117,7 +117,8 @@ export function excludedMutators(preset: Preset): MutatorName[] {
 export interface StaticDecisionInput {
   readonly intensity: Intensity;
   readonly staticRegionLines: number;
-  readonly fullSuiteMs: number;
+  /** Baseline duration of the relevant tests; in related mode a static mutant reruns only those. */
+  readonly baselineMs: number;
   readonly mutationBudgetMs: number;
 }
 
@@ -140,7 +141,7 @@ export function decideIgnoreStatic(input: StaticDecisionInput): StaticDecision {
       reason: `${input.staticRegionLines} static lines in scope exceed the limit of ${MAX_STATIC_LINES}`,
     };
   }
-  const estimatedMs = input.staticRegionLines * STATIC_MUTANTS_PER_LINE * input.fullSuiteMs;
+  const estimatedMs = input.staticRegionLines * STATIC_MUTANTS_PER_LINE * input.baselineMs;
   const allowedMs = input.mutationBudgetMs * STATIC_BUDGET_SHARE;
   if (estimatedMs > allowedMs) {
     return {

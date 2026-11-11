@@ -44,8 +44,15 @@ export function planBatches(ranges: readonly ScopeRange[], maxBatches: number): 
   return batches;
 }
 
+const GLOB_CHARACTERS = /[[\]{}()*?]/g;
+
+// Stryker turns backslashes into slashes before matching, so a bracket class is the only escape that survives.
+export function escapeGlob(file: string): string {
+  return file.replace(GLOB_CHARACTERS, '[$&]');
+}
+
 export function mutatePatterns(batch: Batch): string[] {
   return batch.files.flatMap(({ file, intervals }) =>
-    intervals.map((interval) => `${file}:${interval.startLine}-${interval.endLine}`),
+    intervals.map((interval) => `${escapeGlob(file)}:${interval.startLine}-${interval.endLine}`),
   );
 }

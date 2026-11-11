@@ -22,6 +22,7 @@ const SUFFIXES = ['', 's', 'es', 'ing', 'ed', 'ment', 'ments'];
 
 export const SENSITIVE_PRIOR = 15;
 export const STORAGE_PRIOR = 10;
+export const MAX_PRIOR = 25;
 
 export function tokenize(text: string): string[] {
   return text
@@ -38,7 +39,7 @@ function matchesAny(tokens: readonly string[], terms: readonly string[]): boolea
 
 export function priorOf(...names: readonly string[]): number {
   const tokens = names.flatMap(tokenize);
-  return (
-    (matchesAny(tokens, SENSITIVE_TERMS) ? SENSITIVE_PRIOR : 0) + (matchesAny(tokens, STORAGE_TERMS) ? STORAGE_PRIOR : 0)
-  );
+  const sensitive = matchesAny(tokens, SENSITIVE_TERMS) ? SENSITIVE_PRIOR : 0;
+  const storage = matchesAny(tokens, STORAGE_TERMS) ? STORAGE_PRIOR : 0;
+  return Math.min(MAX_PRIOR, sensitive + storage);
 }

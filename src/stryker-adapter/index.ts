@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   ensureWorkDir,
+  excludedMutators,
   PRESETS,
   rangeForLine,
   removeTree,
@@ -19,7 +20,7 @@ import { buildStrykerOptions, STRYKER_TEMP_DIR } from './options.js';
 import { runWorker, workerPath } from './process.js';
 import type { WireMutant, WireTest } from './worker.js';
 
-export { planBatches, mutatePatterns } from './batches.js';
+export { escapeGlob, mutatePatterns, planBatches } from './batches.js';
 export type { Batch, BatchFile } from './batches.js';
 export { decideChecker, resolveCheckerTypeScript, strykerVersion } from './checker.js';
 export type { CheckerDecision } from './checker.js';
@@ -34,7 +35,7 @@ export interface MutationRequest {
   readonly budgetMs: number;
   readonly concurrency?: number;
   readonly vitestConfigFile?: string;
-  /** Replaces the Stryker child process entry point; for tests of budget enforcement. */
+  /** Replaces the Stryker child process entry point; it must also be loadable as the reporter plugin. */
   readonly workerEntry?: string;
 }
 
@@ -70,7 +71,11 @@ export interface MutationResult {
   };
   readonly staticSkipped: { readonly count: number; readonly reason: string };
   readonly outOfScope: number;
+  /** Mutants Stryker listed for mutators the preset excludes; they are not part of the results. */
+  readonly excludedByPreset: number;
   readonly checker: CheckerDecision;
+  /** Name of the target's own Stryker config file, which chimpd does not load; null when there is none. */
+  readonly targetConfigIgnored: string | null;
   readonly strykerVersion: string;
   readonly dryRunNetMs: number | null;
 }
@@ -79,6 +84,19 @@ export const NOT_TESTED_REASON = 'not tested: budget';
 const STATIC_REASON = 'static mutants are skipped because ignoreStatic is on';
 const OVER_SHARE_FACTOR = 2;
 const FINAL_STATUSES = new Set(['Killed', 'Survived', 'NoCoverage', 'CompileError', 'RuntimeError', 'Timeout', 'Ignored']);
+const TYPE_CHECK_FAILURE = 'Typescript error(s) found in dry run compilation';
+const EMPTY_CONFIG_FILE = 'stryker.config.json';
+
+/** The names Stryker searches for in the working directory, in its order. */
+export const TARGET_CONFIG_NAMES: readonly string[] = ['', '.'].flatMap((prefix) =>
+  ['.conf', '.config'].flatMap((suffix) =>
+    ['json', 'js', 'mjs', 'cjs'].map((extension) => `${prefix}stryker${suffix}.${extension}`),
+  ),
+);
+
+export function findTargetConfig(targetRoot: string): string | null {
+  return TARGET_CONFIG_NAMES.find((name) => fs.existsSync(path.join(targetRoot, name))) ?? null;
+}
 
 function relativeFile(targetRoot: string, fileName: string): string {
   return toPosix(path.relative(targetRoot, path.resolve(targetRoot, fileName)));
@@ -148,24 +166,35 @@ interface BatchRun {
   readonly dryRunNetMs: number | null;
 }
 
-async function runBatch(request: MutationRequest, batch: Batch, checker: CheckerDecision, shareMs: number, remainingMs: number): Promise<BatchRun> {
+interface BatchContext {
+  readonly request: MutationRequest;
+  readonly configFile: string;
+  readonly checkerEnabled: boolean;
+  readonly shareMs: number;
+  readonly remainingMs: number;
+}
+
+async function runBatch(batch: Batch, context: BatchContext): Promise<BatchRun> {
+  const { request, remainingMs } = context;
   const planned = new Map<string, WireMutant>();
   const tested = new Map<string, WireMutant>();
   let tests: readonly WireTest[] = [];
   let dryRunNetMs: number | null = null;
   let plannedCount: number | null = null;
 
-  const overShareMs = shareMs * OVER_SHARE_FACTOR;
+  const entry = request.workerEntry ?? workerPath();
+  const overShareMs = context.shareMs * OVER_SHARE_FACTOR;
   const run = await runWorker({
     cwd: request.targetRoot,
     killAfterMs: Math.min(overShareMs, remainingMs),
-    ...(request.workerEntry === undefined ? {} : { entry: request.workerEntry }),
+    entry,
     options: buildStrykerOptions({
       batch,
       preset: PRESETS[request.intensity],
       ignoreStatic: request.ignoreStatic,
-      checkerEnabled: checker.enabled,
-      pluginPath: workerPath(),
+      checkerEnabled: context.checkerEnabled,
+      pluginPath: entry,
+      configFile: context.configFile,
       ...(request.concurrency === undefined ? {} : { concurrency: request.concurrency }),
       ...(request.vitestConfigFile === undefined ? {} : { vitestConfigFile: request.vitestConfigFile }),
     }),
@@ -194,7 +223,7 @@ async function runBatch(request: MutationRequest, batch: Batch, checker: Checker
     dryRunNetMs,
     report: {
       index: batch.index,
-      files: batch.files.map((entry) => entry.file),
+      files: batch.files.map((file) => file.file),
       outcome,
       elapsedMs: Math.round(run.elapsedMs),
       planned: plannedCount,
@@ -204,12 +233,17 @@ async function runBatch(request: MutationRequest, batch: Batch, checker: Checker
   };
 }
 
+function failedTypeCheck(run: BatchRun): boolean {
+  return run.report.outcome === 'failed' && (run.report.error ?? '').includes(TYPE_CHECK_FAILURE);
+}
+
 export async function runMutation(request: MutationRequest): Promise<MutationResult> {
   const preset = PRESETS[request.intensity];
-  const checker = decideChecker(request.targetRoot);
   const batches = planBatches(request.ranges, preset.maxBatches);
   const budget = startBudget(request.budgetMs);
-  ensureWorkDir(request.targetRoot);
+  const configFile = path.join(ensureWorkDir(request.targetRoot), EMPTY_CONFIG_FILE);
+  fs.writeFileSync(configFile, '{}\n');
+  let checker = decideChecker(request.targetRoot);
 
   const hashes = new Map<string, string>();
   const sourceHash = (file: string): string => {
@@ -227,9 +261,15 @@ export async function runMutation(request: MutationRequest): Promise<MutationRes
   const unplannedFiles: string[] = [];
   let notTested = 0;
   let outOfScope = 0;
+  let excludedByPreset = 0;
+  const excluded = new Set<string>(excludedMutators(preset));
   let dryRunNetMs: number | null = null;
 
   function record(mutant: WireMutant, status: MutantStatus, statusReason: string | null): void {
+    if (status === 'Ignored' && excluded.has(mutant.mutatorName)) {
+      excludedByPreset += 1;
+      return;
+    }
     const file = relativeFile(request.targetRoot, mutant.fileName);
     const range = rangeForLine(request.ranges, file, mutant.start.line);
     if (range === null) {
@@ -243,13 +283,36 @@ export async function runMutation(request: MutationRequest): Promise<MutationRes
       mutatorName: mutant.mutatorName,
       replacement: mutant.replacement,
       status,
-      statusReason,
+      // The failure message of a killed mutant is whichever killing test ran first, so it is not kept.
+      statusReason: status === 'Killed' ? null : statusReason,
       coveredBy: [...mutant.coveredBy].sort(),
       killedBy: [...mutant.killedBy].sort(),
       static: mutant.static,
       sourceHash: sourceHash(file),
       scopeKind: range.kind,
     });
+  }
+
+  async function runWithinBudget(batch: Batch): Promise<BatchRun> {
+    const remainingBatches = batches.length - batch.index;
+    const attempt = (): Promise<BatchRun> => {
+      const remainingMs = budget.remainingMs();
+      return runBatch(batch, {
+        request,
+        configFile,
+        checkerEnabled: checker.enabled,
+        shareMs: remainingMs / remainingBatches,
+        remainingMs,
+      });
+    };
+    const first = await attempt();
+    if (!checker.enabled || !failedTypeCheck(first) || budget.exhausted()) return first;
+    checker = {
+      ...checker,
+      enabled: false,
+      reason: `type checker disabled: target does not type-check under chimpd's TypeScript ${checker.typescriptVersion ?? 'copy'}`,
+    };
+    return attempt();
   }
 
   for (const batch of batches) {
@@ -259,9 +322,7 @@ export async function runMutation(request: MutationRequest): Promise<MutationRes
       unplannedFiles.push(...files);
       continue;
     }
-    const remainingBatches = batches.length - batch.index;
-    const remainingMs = budget.remainingMs();
-    const run = await runBatch(request, batch, checker, remainingMs / remainingBatches, remainingMs);
+    const run = await runWithinBudget(batch);
     reports.push(run.report);
     dryRunNetMs = dryRunNetMs === null ? run.dryRunNetMs : dryRunNetMs + (run.dryRunNetMs ?? 0);
 
@@ -276,6 +337,7 @@ export async function runMutation(request: MutationRequest): Promise<MutationRes
     }
   }
 
+  fs.rmSync(configFile, { force: true });
   const staticSkipped = records.filter((mutant) => mutant.static && mutant.status === 'Ignored').length;
   return {
     mutants: records.sort(compareMutants),
@@ -284,7 +346,9 @@ export async function runMutation(request: MutationRequest): Promise<MutationRes
     notTested: { reason: 'budget', mutants: notTested, unplannedFiles: unplannedFiles.sort() },
     staticSkipped: { count: staticSkipped, reason: STATIC_REASON },
     outOfScope,
+    excludedByPreset,
     checker,
+    targetConfigIgnored: findTargetConfig(request.targetRoot),
     strykerVersion: strykerVersion(),
     dryRunNetMs,
   };
