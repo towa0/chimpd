@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseUnifiedDiff } from '../../src/diff-scoper/index.js';
+import { parseUnifiedDiff, unquoteGitPath } from '../../src/diff-scoper/index.js';
 
 function diffOf(...lines: string[]): string {
   return `${lines.join('\n')}\n`;
@@ -116,6 +116,54 @@ describe('parseUnifiedDiff', () => {
       ),
     );
     expect(file).toMatchObject({ oldPath: 'src/my file.ts', newPath: 'src/my file.ts' });
+  });
+
+  it('marks submodules and symlinks by their file mode', () => {
+    const files = parseUnifiedDiff(
+      diffOf(
+        'diff --git a/vendor/lib b/vendor/lib',
+        'index 1111111..2222222 160000',
+        '--- a/vendor/lib',
+        '+++ b/vendor/lib',
+        '@@ -1 +1 @@',
+        '-Subproject commit 1111111111111111111111111111111111111111',
+        '+Subproject commit 2222222222222222222222222222222222222222',
+        'diff --git a/src/alias.ts b/src/alias.ts',
+        'new file mode 120000',
+        'index 0000000..3333333',
+        '--- /dev/null',
+        '+++ b/src/alias.ts',
+        '@@ -0,0 +1 @@',
+        '+shapes.ts',
+        'diff --git a/src/plain.ts b/src/plain.ts',
+        'index 4444444..5555555 100644',
+        '--- a/src/plain.ts',
+        '+++ b/src/plain.ts',
+        '@@ -1 +1 @@',
+        '-a',
+        '+b',
+      ),
+    );
+    expect(files.map((file) => file.entryType)).toEqual(['submodule', 'symlink', 'file']);
+  });
+
+  it('unquotes paths that git wraps in quotes', () => {
+    expect(unquoteGitPath('src/plain.ts')).toBe('src/plain.ts');
+    expect(unquoteGitPath('"src/tab\\there.ts"')).toBe('src/tab\there.ts');
+    expect(unquoteGitPath('"src/say \\"hi\\".ts"')).toBe('src/say "hi".ts');
+    expect(unquoteGitPath('"src/back\\\\slash.ts"')).toBe('src/back\\slash.ts');
+    expect(unquoteGitPath('"src/prijs-\\303\\251.ts"')).toBe('src/prijs-é.ts');
+    const [file] = parseUnifiedDiff(
+      diffOf(
+        'diff --git "a/src/say \\"hi\\".ts" "b/src/say \\"hi\\".ts"',
+        '--- "a/src/say \\"hi\\".ts"',
+        '+++ "b/src/say \\"hi\\".ts"',
+        '@@ -1 +1 @@',
+        '-a',
+        '+b',
+      ),
+    );
+    expect(file).toMatchObject({ oldPath: 'src/say "hi".ts', newPath: 'src/say "hi".ts' });
   });
 
   it('returns nothing for an empty diff', () => {

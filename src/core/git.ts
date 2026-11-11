@@ -1,6 +1,16 @@
 import { execFile } from 'node:child_process';
 
-const READ_ONLY_COMMANDS = new Set(['diff', 'log', 'merge-base', 'show', 'status']);
+const READ_ONLY_COMMANDS = new Set([
+  'cat-file',
+  'diff',
+  'log',
+  'ls-files',
+  'merge-base',
+  'rev-list',
+  'rev-parse',
+  'show',
+  'status',
+]);
 
 const MAX_OUTPUT_BYTES = 256 * 1024 * 1024;
 
@@ -32,7 +42,7 @@ export function git(cwd: string, args: readonly string[]): Promise<string> {
 }
 
 export async function resolveSha(cwd: string, ref: string): Promise<string> {
-  return (await git(cwd, ['log', '-1', '--format=%H', ref, '--'])).trim();
+  return (await git(cwd, ['rev-parse', '--verify', `${ref}^{commit}`])).trim();
 }
 
 export async function mergeBase(cwd: string, base: string, head = 'HEAD'): Promise<string> {

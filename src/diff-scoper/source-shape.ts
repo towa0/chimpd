@@ -10,15 +10,28 @@ interface Span extends LineSpan {
   readonly end: number;
 }
 
+interface StatementSpan extends Span {
+  readonly declaresCode: boolean;
+}
+
+interface ClassSpan extends Span {
+  readonly members: readonly Span[];
+}
+
+export interface DeletionTarget extends LineSpan {
+  readonly staticRegion: boolean;
+}
+
 export interface SourceShape {
   readonly lineCount: number;
   /** True when the line's code sits at module top level, outside every function and class member. */
   isStaticLine(line: number): boolean;
   enclosingFunction(line: number): LineSpan | null;
-  /** The smallest function that contains the gap between `line` and the line after it. */
-  functionAroundGapAfter(line: number): LineSpan | null;
-  /** The top-level statement to attribute a deletion after `line` to, or null in an empty file. */
-  statementForGapAfter(line: number): LineSpan | null;
+  /**
+   * Where to attribute lines deleted after `line`: the smallest enclosing function, else the
+   * adjacent class member, else the adjacent top-level statement, or what turned out empty.
+   */
+  deletionTargetAfter(line: number): DeletionTarget | 'empty-class' | 'empty-file';
 }
 
 function isFunctionLike(node: ts.Node): boolean {
@@ -34,8 +47,8 @@ function isFunctionLike(node: ts.Node): boolean {
   );
 }
 
-function isClassMember(node: ts.Node): boolean {
-  return ts.isPropertyDeclaration(node) || ts.isClassStaticBlockDeclaration(node);
+function isCodeMember(node: ts.Node): boolean {
+  return isFunctionLike(node) || ts.isPropertyDeclaration(node) || ts.isClassStaticBlockDeclaration(node);
 }
 
 // `const f = () => {}` reads as a function to its author, so the whole statement is the unit.
@@ -55,12 +68,16 @@ function scriptKind(fileName: string): ts.ScriptKind {
   return fileName.endsWith('x') ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
 }
 
-function smallest<T extends LineSpan>(spans: readonly T[], size: (span: T) => number): T | null {
+function smallest<T extends Span>(spans: readonly T[]): T | null {
   let best: T | null = null;
   for (const span of spans) {
-    if (best === null || size(span) < size(best)) best = span;
+    if (best === null || span.end - span.start < best.end - best.start) best = span;
   }
   return best;
+}
+
+function adjacent<T extends LineSpan>(spans: readonly T[], line: number): T | null {
+  return spans.find((span) => span.startLine > line) ?? spans.findLast((span) => span.endLine <= line) ?? null;
 }
 
 export function analyzeSource(fileName: string, text: string): SourceShape {
@@ -75,19 +92,25 @@ export function analyzeSource(fileName: string, text: string): SourceShape {
 
   const functions: Span[] = [];
   const nonStatic: Span[] = [];
+  const classes: ClassSpan[] = [];
   const visit = (node: ts.Node): void => {
     if (isFunctionLike(node)) {
       const span = spanOf(functionUnit(node));
       functions.push(span);
       nonStatic.push(span);
-    } else if (isClassMember(node)) {
+    } else if (isCodeMember(node)) {
       nonStatic.push(spanOf(node));
+    } else if (ts.isClassLike(node)) {
+      classes.push({ ...spanOf(node), members: node.members.filter(isCodeMember).map(spanOf) });
     }
     ts.forEachChild(node, visit);
   };
   visit(sourceFile);
 
-  const statements = sourceFile.statements.map(spanOf);
+  const statements: StatementSpan[] = sourceFile.statements.map((statement) => ({
+    ...spanOf(statement),
+    declaresCode: ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement),
+  }));
 
   function codePosition(line: number): number {
     const start = lineStarts[line - 1] ?? text.length;
@@ -98,20 +121,32 @@ export function analyzeSource(fileName: string, text: string): SourceShape {
 
   const containsPosition = (position: number) => (span: Span) => span.start <= position && position < span.end;
   const containsGapAfter = (line: number) => (span: LineSpan) => span.startLine <= line && span.endLine > line;
-  const byLength = (span: Span): number => span.end - span.start;
+  const isStaticLine = (line: number): boolean => !nonStatic.some(containsPosition(codePosition(line)));
+  const lines = ({ startLine, endLine }: LineSpan): LineSpan => ({ startLine, endLine });
 
   return {
     lineCount: lineStarts.length,
-    isStaticLine: (line) => !nonStatic.some(containsPosition(codePosition(line))),
-    enclosingFunction: (line) => smallest(functions.filter(containsPosition(codePosition(line))), byLength),
-    functionAroundGapAfter: (line) => smallest(functions.filter(containsGapAfter(line)), byLength),
-    statementForGapAfter(line) {
-      return (
-        statements.find(containsGapAfter(line)) ??
-        statements.find((statement) => statement.startLine > line) ??
-        statements.at(-1) ??
-        null
-      );
+    isStaticLine,
+    enclosingFunction(line) {
+      const found = smallest(functions.filter(containsPosition(codePosition(line))));
+      return found === null ? null : lines(found);
+    },
+    deletionTargetAfter(line) {
+      const enclosing = smallest(functions.filter(containsGapAfter(line)));
+      if (enclosing !== null) return { ...lines(enclosing), staticRegion: false };
+
+      const owner = smallest(classes.filter(containsGapAfter(line)));
+      if (owner !== null) {
+        const member = adjacent(owner.members, line);
+        return member === null ? 'empty-class' : { ...lines(member), staticRegion: false };
+      }
+
+      const statement = statements.find(containsGapAfter(line)) ?? adjacent(statements, line);
+      if (statement === null) return 'empty-file';
+      return {
+        ...lines(statement),
+        staticRegion: !statement.declaresCode && isStaticLine(statement.startLine),
+      };
     },
   };
 }

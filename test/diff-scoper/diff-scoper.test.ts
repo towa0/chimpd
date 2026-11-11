@@ -1,6 +1,9 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { ScopeRange } from '../../src/core/index.js';
-import { scopeDiff, type DiffScope, type ScopeMode } from '../../src/diff-scoper/index.js';
+import type { ScopeMode, ScopeRange } from '../../src/core/index.js';
+import { scopeDiff, type DiffScope } from '../../src/diff-scoper/index.js';
 import { createSampleApp, history } from '../helpers/sample-app.js';
 import { createTempRepo, type TempRepo } from '../helpers/temp-repo.js';
 
@@ -38,6 +41,20 @@ const SHAPES = [
 
 const FILE = 'src/shapes.ts';
 
+// Windows needs a privilege to create file symlinks; the tests that need one skip without it.
+function canCreateFileSymlinks(): boolean {
+  const probe = fs.mkdtempSync(path.join(os.tmpdir(), 'chimpd-symlink-probe-'));
+  try {
+    fs.writeFileSync(path.join(probe, 'target'), '');
+    fs.symlinkSync('target', path.join(probe, 'link'), 'file');
+    return true;
+  } catch {
+    return false;
+  } finally {
+    fs.rmSync(probe, { recursive: true, force: true });
+  }
+}
+
 const repos: TempRepo[] = [];
 
 afterEach(() => {
@@ -50,7 +67,7 @@ function shapesRepo(): TempRepo {
   repo.write(FILE, SHAPES);
   repo.write('src/shapes.test.ts', "import './shapes.js';\n");
   repo.write('README.md', 'shapes\n');
-  repo.setRef('refs/remotes/origin/main', repo.commit('Add shapes'));
+  repo.branch('origin/main', repo.commit('Add shapes'));
   return repo;
 }
 
@@ -75,15 +92,14 @@ describe('merge-base resolution', () => {
     repo.write(FILE, SHAPES);
     const branchPoint = repo.commit('Add shapes');
     repo.write('src/main-only.ts', 'export const MAIN = 1;\n');
-    repo.setRef('refs/remotes/origin/main', repo.commit('Advance main'));
+    repo.branch('origin/main', repo.commit('Advance main'));
 
-    repo.startBranch('feature', branchPoint);
-    repo.remove('src/main-only.ts');
+    repo.switchToNew('feature', branchPoint);
     repo.edit(FILE, 'return value;', 'return value + 0;');
     const head = repo.commit('Change clamp');
 
     const result = await scope(repo);
-    expect(result).toMatchObject({ base: 'origin/main', mergeBase: branchPoint, head });
+    expect(result).toMatchObject({ base: 'origin/main', mergeBase: branchPoint, head, dirty: false });
     expect(result.changedSourceFiles).toEqual([FILE]);
     expect(result.ignoredFiles).toEqual([]);
     expect(result.ranges).toEqual([range(8, 8, 'changed', false)]);
@@ -93,7 +109,7 @@ describe('merge-base resolution', () => {
     const repo = shapesRepo();
     repo.edit(FILE, 'return value;', 'return value + 0;');
     const middle = repo.commit('Change clamp');
-    repo.setRef('refs/heads/reviewed', middle);
+    repo.branch('reviewed', middle);
     repo.edit(FILE, 'const factor = 2;', 'const factor = 3;');
     repo.commit('Change scale');
 
@@ -109,10 +125,43 @@ describe('merge-base resolution', () => {
     );
   });
 
-  it('includes uncommitted changes to tracked files', async () => {
+  it('includes uncommitted changes to tracked files and flags the tree as dirty', async () => {
     const repo = shapesRepo();
     repo.edit(FILE, 'return value;', 'return value + 0;');
-    expect((await scope(repo)).ranges).toEqual([range(8, 8, 'changed', false)]);
+    const result = await scope(repo);
+    expect(result.dirty).toBe(true);
+    expect(result.head).toBe(repo.head());
+    expect(result.ranges).toEqual([range(8, 8, 'changed', false)]);
+  });
+
+  it('treats untracked files as fully changed, under the same file rules', async () => {
+    const repo = shapesRepo();
+    repo.write('src/fresh.ts', 'export const FRESH = 1;\n\nexport function fresh(): number {\n  return FRESH;\n}\n');
+    repo.write('src/fresh.test.ts', 'export {};\n');
+    repo.write('notes.txt', 'untracked\n');
+    repo.write('.gitignore', 'ignored.ts\n');
+    repo.write('ignored.ts', 'export const IGNORED = 1;\n');
+    const result = await scope(repo, 'enclosing-functions');
+    expect(result.dirty).toBe(true);
+    expect(result.changedSourceFiles).toEqual(['src/fresh.ts']);
+    expect(result.changedTestFiles).toEqual(['src/fresh.test.ts']);
+    expect(result.ignoredFiles).toEqual([
+      { file: '.gitignore', reason: 'not-typescript' },
+      { file: 'notes.txt', reason: 'not-typescript' },
+    ]);
+    expect(result.ranges).toEqual([
+      range(1, 2, 'changed', true, 'src/fresh.ts'),
+      range(3, 5, 'changed', false, 'src/fresh.ts'),
+      range(3, 5, 'enclosing-function', false, 'src/fresh.ts'),
+      range(6, 6, 'changed', true, 'src/fresh.ts'),
+    ]);
+  });
+
+  it('reports a clean tree after a commit', async () => {
+    const repo = shapesRepo();
+    repo.edit(FILE, 'return value;', 'return value + 0;');
+    repo.commit('Change clamp');
+    expect((await scope(repo)).dirty).toBe(false);
   });
 });
 
@@ -177,30 +226,64 @@ describe('deletion-only hunks', () => {
     expect((await scope(repo)).ranges).toEqual([range(20, 21, 'deletion-expanded', false)]);
   });
 
-  it('fall on the next top-level statement, marked static', async () => {
+  it('fall on the next top-level statement, static when it is top-level code', async () => {
+    const repo = shapesRepo();
+    repo.edit(FILE, 'export const LIMIT = 10;\n', '');
+    repo.commit('Drop LIMIT');
+    expect((await scope(repo)).ranges).toEqual([range(1, 1, 'deletion-expanded', true)]);
+  });
+
+  it('fall on the next top-level statement, not static when it is a function', async () => {
     const repo = shapesRepo();
     repo.edit(FILE, 'export const DOUBLE = LIMIT * 2;\n', '');
     repo.commit('Drop DOUBLE');
-    expect((await scope(repo)).ranges).toEqual([range(3, 8, 'deletion-expanded', true)]);
+    expect((await scope(repo)).ranges).toEqual([range(3, 8, 'deletion-expanded', false)]);
   });
 
   it('fall on the previous top-level statement at the end of the file', async () => {
     const repo = shapesRepo();
     repo.edit(FILE, "\nexport const LABELS = ['a', 'b'].map((label) => label.toUpperCase());\n", '');
     repo.commit('Drop LABELS');
-    expect((await scope(repo)).ranges).toEqual([range(16, 26, 'deletion-expanded', true)]);
+    expect((await scope(repo)).ranges).toEqual([range(16, 26, 'deletion-expanded', false)]);
   });
 
-  it('fall on the class when a member is deleted', async () => {
+  it('fall on a multi-line top-level statement that contains the deletion', async () => {
+    const repo = shapesRepo();
+    repo.write('src/table.ts', 'export const TABLE = {\n  a: 1,\n  b: 2,\n  c: 3,\n};\n');
+    repo.commit('Add a table');
+    repo.branch('origin/main', repo.head());
+    repo.edit('src/table.ts', '  b: 2,\n', '');
+    repo.commit('Drop b');
+    expect((await scope(repo)).ranges).toEqual([range(1, 4, 'deletion-expanded', true, 'src/table.ts')]);
+  });
+
+  it('fall on the next class member when a member is deleted', async () => {
     const repo = shapesRepo();
     repo.edit(FILE, '  count = 0;\n\n', '');
     repo.edit(FILE, '    this.count += steps.length;\n    return this.count;\n', '    return steps.length;\n');
     repo.commit('Drop the counter field');
-    const result = await scope(repo);
-    expect(result.ranges).toEqual([
-      range(16, 23, 'deletion-expanded', true),
+    expect((await scope(repo)).ranges).toEqual([
+      range(17, 22, 'deletion-expanded', false),
       range(21, 21, 'changed', false),
     ]);
+  });
+
+  it('fall on the previous class member when the last member is deleted', async () => {
+    const repo = shapesRepo();
+    const method = SHAPES.split('\n').slice(17, 25).join('\n');
+    repo.edit(FILE, `${method}\n`, '');
+    repo.commit('Drop increment');
+    expect((await scope(repo)).ranges).toEqual([range(17, 17, 'deletion-expanded', false)]);
+  });
+
+  it('leave a note when a class keeps no members', async () => {
+    const repo = shapesRepo();
+    const body = SHAPES.split('\n').slice(16, 25).join('\n');
+    repo.edit(FILE, `${body}\n`, '');
+    repo.commit('Empty the class');
+    const result = await scope(repo);
+    expect(result.ranges).toEqual([]);
+    expect(result.notes).toEqual([{ file: FILE, line: 16, message: 'deleted class members, nothing to mutate' }]);
   });
 
   it('leave a note when no statement remains', async () => {
@@ -311,6 +394,68 @@ describe('static-region marking', () => {
     expect((await scope(app, 'enclosing-functions')).ranges).toEqual([
       range(line, line, 'changed', true, 'src/config.ts'),
     ]);
+  });
+});
+
+describe('unusual paths and entries', () => {
+  it.each(['src/prijsberekening-é.ts', 'src/price list.ts', 'src/日本語/値.ts'])('scopes %s', async (file) => {
+    const repo = shapesRepo();
+    repo.write(file, 'export function price(): number {\n  return 1;\n}\n');
+    repo.commit('Add a file');
+    repo.branch('origin/main', repo.head());
+    repo.edit(file, 'return 1;', 'return 2;');
+    repo.commit('Change the price');
+    const result = await scope(repo, 'enclosing-functions');
+    expect(result.changedSourceFiles).toEqual([file]);
+    expect(result.ranges).toEqual([
+      range(1, 3, 'enclosing-function', false, file),
+      range(2, 2, 'changed', false, file),
+    ]);
+  });
+
+  it('scopes an untracked file with a non-ASCII name', async () => {
+    const repo = shapesRepo();
+    repo.write('src/prijsberekening-é.ts', 'export const PRIJS = 1;\n');
+    const result = await scope(repo);
+    expect(result.changedSourceFiles).toEqual(['src/prijsberekening-é.ts']);
+  });
+
+  it('skips a changed submodule with a reason', async () => {
+    const repo = shapesRepo();
+    const nested = repo.embedRepository('vendor/widgets.ts');
+    nested.commit('index.ts', 'export const A = 1;\n');
+    repo.commit('Add a submodule');
+    repo.branch('origin/main', repo.head());
+    nested.commit('index.ts', 'export const A = 2;\n');
+    repo.commit('Update the submodule');
+    const result = await scope(repo);
+    expect(result.ignoredFiles).toEqual([{ file: 'vendor/widgets.ts', reason: 'submodule' }]);
+    expect(result.changedSourceFiles).toEqual([]);
+    expect(result.ranges).toEqual([]);
+  });
+
+  it('skips an untracked nested repository with a reason', async () => {
+    const repo = shapesRepo();
+    repo.embedRepository('vendor/gadgets').commit('index.ts', 'export const A = 1;\n');
+    const result = await scope(repo);
+    expect(result.ignoredFiles).toEqual([{ file: 'vendor/gadgets', reason: 'submodule' }]);
+    expect(result.changedSourceFiles).toEqual([]);
+  });
+
+  it.skipIf(!canCreateFileSymlinks())('skips a symlinked source file with a reason', async () => {
+    const repo = shapesRepo();
+    fs.symlinkSync('shapes.ts', path.join(repo.dir, 'src/alias.ts'), 'file');
+    repo.commit('Add a link');
+    const result = await scope(repo);
+    expect(result.ignoredFiles).toEqual([{ file: 'src/alias.ts', reason: 'symlink' }]);
+    expect(result.changedSourceFiles).toEqual([]);
+  });
+
+  it.skipIf(!canCreateFileSymlinks())('skips an untracked symlinked source file with a reason', async () => {
+    const repo = shapesRepo();
+    fs.symlinkSync('shapes.ts', path.join(repo.dir, 'src/alias.ts'), 'file');
+    const result = await scope(repo);
+    expect(result.ignoredFiles).toEqual([{ file: 'src/alias.ts', reason: 'symlink' }]);
   });
 });
 

@@ -1,9 +1,8 @@
 import type { HttpRequestEvent } from '@mswjs/interceptors';
 import { RequestController } from '@mswjs/interceptors';
 import http from 'node:http';
-import type { AbortKind, DeadlineMechanism } from '../core/index.js';
+import { realNow, type AbortKind, type DeadlineMechanism } from '../core/index.js';
 import { metadataFor, socketTimeoutFor, type CallMetadata } from './call-capture.js';
-import { realNow } from './real-clock.js';
 
 export class BlackHoleReleased extends Error {
   override readonly name = 'ChimpdBlackHoleReleased';

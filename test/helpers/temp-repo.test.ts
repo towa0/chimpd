@@ -29,9 +29,9 @@ describe('temp repo guards', () => {
     expect(() => assertUnderTemp(repo.dir)).not.toThrow();
   });
 
-  it('rejects git commands that are neither read-only nor init, add, or commit', () => {
+  it('rejects git commands that write history beyond the allowed set', () => {
     const repo = track(createTempRepo());
-    for (const command of ['push', 'checkout', 'reset', 'rebase', 'stash', 'remote', 'config']) {
+    for (const command of ['push', 'reset', 'rebase', 'stash', 'remote', 'config', 'update-ref', 'merge']) {
       expect(() => repo.git(command)).toThrow(`git ${command} is not allowed in test helpers`);
     }
   });
@@ -72,16 +72,16 @@ describe('temp repo isolation', () => {
     expect(repo.git('show', 'HEAD:crlf.txt')).toBe('one\r\ntwo\r\n');
   });
 
-  it('starts a branch from an earlier commit without checkout', () => {
+  it('starts a branch from an earlier commit', () => {
     const repo = track(createTempRepo());
     repo.write('a.txt', 'one\n');
     const first = repo.commit('Add a');
     repo.write('main-only.txt', 'main\n');
     const mainTip = repo.commit('Advance main');
-    repo.setRef('refs/remotes/origin/main', mainTip);
+    repo.branch('origin/main', mainTip);
 
-    repo.startBranch('feature', first);
-    repo.remove('main-only.txt');
+    repo.switchToNew('feature', first);
+    expect(fs.existsSync(path.join(repo.dir, 'main-only.txt'))).toBe(false);
     repo.write('a.txt', 'feature\n');
     const featureTip = repo.commit('Change a on feature');
 

@@ -1,3 +1,9 @@
+export type Intensity = 1 | 2 | 3;
+
+export type ScopeMode = 'changed-lines' | 'enclosing-functions';
+
+export type FaultKind = 'blackhole' | 'http-500' | 'malformed-json' | 'connection-refused';
+
 export type ScopeKind = 'changed' | 'enclosing-function' | 'deletion-expanded';
 
 export interface ScopeRange {
@@ -7,6 +13,40 @@ export interface ScopeRange {
   readonly endLine: number;
   readonly kind: ScopeKind;
   readonly staticRegion: boolean;
+}
+
+/** One-based line and column, as Stryker reports them. */
+export interface Position {
+  readonly line: number;
+  readonly column: number;
+}
+
+export type MutantStatus =
+  | 'Killed'
+  | 'Survived'
+  | 'NoCoverage'
+  | 'CompileError'
+  | 'RuntimeError'
+  | 'Timeout'
+  | 'Ignored'
+  | 'Pending'
+  | 'NotTested';
+
+export interface MutantRecord {
+  /** Repo-relative path with forward slashes. */
+  readonly file: string;
+  readonly start: Position;
+  /** Exclusive. */
+  readonly end: Position;
+  readonly mutatorName: string;
+  readonly replacement: string;
+  readonly status: MutantStatus;
+  readonly statusReason: string | null;
+  readonly coveredBy: readonly string[];
+  readonly killedBy: readonly string[];
+  readonly static: boolean;
+  readonly sourceHash: string;
+  readonly scopeKind: ScopeKind;
 }
 
 export type DeadlineMechanism = 'signal' | 'socket-timeout' | 'manual-destroy';

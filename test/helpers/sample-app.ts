@@ -10,7 +10,7 @@ export interface SampleApp extends TempRepo {
 export function createSampleApp(): SampleApp {
   const repo = createTempRepo({ template: sampleAppTemplate, linkNodeModules: true });
   const baseSha = repo.commit('Add sample app');
-  repo.setRef('refs/remotes/origin/main', baseSha);
+  repo.branch('origin/main', baseSha);
   return Object.assign(repo, { baseSha });
 }
 

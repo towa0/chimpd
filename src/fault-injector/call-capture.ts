@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import http from 'node:http';
 import https from 'node:https';
 import { syncBuiltinESMExports } from 'node:module';
-import { realNow } from './real-clock.js';
+import { realNow } from '../core/index.js';
 
 export interface CallMetadata {
   readonly path: 'fetch' | 'http';

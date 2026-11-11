@@ -3,12 +3,23 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { removeTree } from '../../src/core/index.js';
 
 export const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 export const repoNodeModules = path.join(repoRoot, 'node_modules');
 
-const WRITE_COMMANDS = new Set(['init', 'add', 'commit']);
-const READ_COMMANDS = new Set(['log', 'diff', 'status', 'merge-base', 'show']);
+const WRITE_COMMANDS = new Set(['init', 'add', 'commit', 'branch', 'switch', 'checkout']);
+const READ_COMMANDS = new Set([
+  'log',
+  'diff',
+  'status',
+  'merge-base',
+  'show',
+  'rev-parse',
+  'ls-files',
+  'rev-list',
+  'cat-file',
+]);
 
 function isInside(parent: string, child: string): boolean {
   const relative = path.relative(parent, child);
@@ -43,8 +54,11 @@ export interface TempRepo {
   lineOf(file: string, snippet: string): number;
   commit(message: string): string;
   head(): string;
-  setRef(ref: string, sha: string): void;
-  startBranch(name: string, sha: string): void;
+  /** Points a branch at a commit. `origin/main` is a local branch that stands in for the remote one. */
+  branch(name: string, sha: string): void;
+  switchToNew(name: string, sha: string): void;
+  /** Creates a nested repository with one commit, which the outer repository records as a submodule. */
+  embedRepository(directory: string): { commit(file: string, content: string): void };
   cleanup(): void;
 }
 
@@ -106,28 +120,33 @@ export function createTempRepo(options: TempRepoOptions = {}): TempRepo {
     };
   }
 
-  function git(...args: string[]): string {
+  function gitIn(cwd: string, args: readonly string[]): string {
     const command = args[0] ?? '';
-    if (WRITE_COMMANDS.has(command)) assertUnderTemp(dir);
+    if (WRITE_COMMANDS.has(command)) assertUnderTemp(cwd);
     else if (!READ_COMMANDS.has(command)) throw new Error(`git ${command} is not allowed in test helpers`);
     return execFileSync(
       'git',
-      ['-c', 'commit.gpgsign=false', '-c', 'core.autocrlf=false', '-c', 'core.quotePath=false', ...args],
-      { cwd: dir, env: environment(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+      [
+        '-c',
+        'commit.gpgsign=false',
+        '-c',
+        'core.autocrlf=false',
+        '-c',
+        'core.quotePath=false',
+        '-c',
+        'advice.addEmbeddedRepo=false',
+        ...args,
+      ],
+      { cwd, env: environment(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
     );
   }
+
+  const git = (...args: string[]): string => gitIn(dir, args);
 
   function resolve(file: string): string {
     const target = path.resolve(dir, file);
     if (!isInside(dir, target)) throw new Error(`${file} is outside the temp repository`);
     return target;
-  }
-
-  function writeGitFile(relative: string, content: string): void {
-    assertUnderTemp(dir);
-    const target = path.join(dir, '.git', relative);
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.writeFileSync(target, content);
   }
 
   const repo: TempRepo = {
@@ -162,16 +181,29 @@ export function createTempRepo(options: TempRepoOptions = {}): TempRepo {
       commits += 1;
       return repo.head();
     },
-    head: () => git('log', '-1', '--format=%H').trim(),
-    // Refs are written as files so the helper never needs git commands beyond init, add, and commit.
-    setRef: (ref, sha) => writeGitFile(ref, `${sha}\n`),
-    startBranch(name, sha) {
-      writeGitFile(`refs/heads/${name}`, `${sha}\n`);
-      writeGitFile('HEAD', `ref: refs/heads/${name}\n`);
+    head: () => git('rev-parse', 'HEAD').trim(),
+    branch(name, sha) {
+      git('branch', '--force', name, sha);
+    },
+    switchToNew(name, sha) {
+      git('switch', '--quiet', '--create', name, sha);
+    },
+    embedRepository(directory) {
+      const nested = resolve(directory);
+      fs.mkdirSync(nested, { recursive: true });
+      gitIn(nested, ['init', '--quiet', '--initial-branch=main']);
+      return {
+        commit(file, content) {
+          fs.writeFileSync(path.join(nested, file), content);
+          gitIn(nested, ['add', '-A']);
+          gitIn(nested, ['commit', '--quiet', '-m', `Change ${file}`]);
+          commits += 1;
+        },
+      };
     },
     cleanup() {
       removeNodeModulesLink(dir);
-      fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      removeTree(root);
     },
   };
 
