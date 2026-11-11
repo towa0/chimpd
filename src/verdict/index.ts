@@ -17,6 +17,10 @@ export function hasDeadline(observation: BlackHoleObservation): boolean {
   return observation.signalAttached === true || observation.socketTimeoutMs !== null;
 }
 
+function deadlineUndeterminable(observation: BlackHoleObservation): boolean {
+  return !observation.metadataCaptured || observation.signalAttached === null;
+}
+
 export function classifyBlackHole(observation: BlackHoleObservation): BlackHoleVerdict {
   const { firedMechanism, abortKind } = observation;
   const testFailed = observation.testOutcome === 'failed' || observation.errorEscaped;
@@ -54,13 +58,13 @@ export function classifyBlackHole(observation: BlackHoleObservation): BlackHoleV
             : `the call has a ${deadlineMs} ms deadline that did not fire within the test deadline`,
       };
     }
-    if (observation.signalAttached === null) {
+    if (deadlineUndeterminable(observation)) {
       return {
         ...pending,
         verdict: 'inconclusive',
         findingKind: null,
         deadlineMs: null,
-        reason: 'the request was still pending at the test deadline and its signal could not be determined',
+        reason: 'the request was still pending at the test deadline and its deadline could not be determined',
       };
     }
     return {

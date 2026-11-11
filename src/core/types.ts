@@ -1,11 +1,13 @@
-export type DeadlineMechanism = 'signal' | 'socket-timeout';
+export type DeadlineMechanism = 'signal' | 'socket-timeout' | 'manual-destroy';
 
 export type AbortKind = 'timeout' | 'abort';
 
 export type TestOutcome = 'passed' | 'failed';
 
 export interface BlackHoleObservation {
-  /** null when the caller's intent cannot be determined, as with a Request object passed to fetch. */
+  /** false when the request bypassed the call wrappers, so its signal and socket timeout are both unknown. */
+  readonly metadataCaptured: boolean;
+  /** null when the caller's intent cannot be determined, as with a Request built before the wrappers were installed. */
   readonly signalAttached: boolean | null;
   readonly signalDeadlineMs: number | null;
   readonly socketTimeoutMs: number | null;

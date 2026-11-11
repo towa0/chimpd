@@ -9,7 +9,7 @@ export interface CallMetadata {
   readonly stack: string;
   readonly createdAt: number;
   readonly signal: AbortSignal | null;
-  /** null when a Request object was passed to fetch: every Request carries a signal of its own. */
+  /** null when fetch received a Request built before the Request wrapper was installed. */
   readonly signalAttached: boolean | null;
   readonly signalDeadlineMs: number | null;
   readonly timeoutOptionMs: number | null;
@@ -29,6 +29,14 @@ const httpCalls = new WeakMap<http.ClientRequest, CallMetadata>();
 const requestTimeouts = new WeakMap<http.ClientRequest, SocketTimeout>();
 const fetchCalls = new AsyncLocalStorage<CallMetadata>();
 
+interface RequestSignalRecord {
+  readonly signalAttached: boolean;
+  readonly signalDeadlineMs: number | null;
+}
+
+// Values hold no object references, so a recorded Request is collected exactly as before.
+const requestSignals = new WeakMap<Request, RequestSignalRecord>();
+
 function captureStack(below: Callable): string {
   const holder: { stack?: string } = {};
   const limit = Error.stackTraceLimit;
@@ -46,18 +54,26 @@ function positiveMs(value: unknown): number | null {
   return typeof value === 'number' && value > 0 ? value : null;
 }
 
+function signalRecord(input: unknown, init: unknown): RequestSignalRecord | undefined {
+  const initSignal = (init as { signal?: unknown } | undefined)?.signal;
+  if (initSignal instanceof AbortSignal) {
+    return { signalAttached: true, signalDeadlineMs: deadlineOf(initSignal) };
+  }
+  // An explicit null detaches the signal of the Request being copied.
+  if (initSignal !== null && input instanceof Request) return requestSignals.get(input);
+  return { signalAttached: false, signalDeadlineMs: null };
+}
+
 function captureFetch(input: unknown, init: unknown, below: Callable): CallMetadata {
   const initSignal = (init as { signal?: unknown } | undefined)?.signal;
-  const fromInit = initSignal instanceof AbortSignal ? initSignal : null;
-  const fromRequest = input instanceof Request ? input.signal : null;
-  const signal = fromInit ?? fromRequest;
+  const record = signalRecord(input, init);
   return {
     path: 'fetch',
     stack: captureStack(below),
     createdAt: realNow(),
-    signal,
-    signalAttached: fromInit !== null ? true : fromRequest !== null ? null : false,
-    signalDeadlineMs: deadlineOf(signal),
+    signal: initSignal instanceof AbortSignal ? initSignal : input instanceof Request ? input.signal : null,
+    signalAttached: record?.signalAttached ?? null,
+    signalDeadlineMs: record?.signalDeadlineMs ?? null,
     timeoutOptionMs: null,
   };
 }
@@ -95,6 +111,17 @@ function wrapFetch(original: typeof fetch): typeof fetch {
     return fetchCalls.run(metadata, () => Reflect.apply(original, this, args) as Promise<Response>);
   };
   return keepIdentity(wrapper, original);
+}
+
+function wrapRequest(original: typeof Request): typeof Request {
+  return new Proxy(original, {
+    construct(target, args: unknown[], newTarget) {
+      const request = Reflect.construct(target, args, newTarget) as Request;
+      const record = signalRecord(args[0], args[1]);
+      if (record !== undefined) requestSignals.set(request, record);
+      return request;
+    },
+  });
 }
 
 function wrapHttpCall<T extends typeof http.request>(original: T): T {
@@ -161,6 +188,7 @@ export interface CallCapture {
 export function installCallCapture(): CallCapture {
   const original = {
     fetch: globalThis.fetch,
+    Request: globalThis.Request,
     httpRequest: http.request,
     httpGet: http.get,
     httpsRequest: https.request,
@@ -178,6 +206,7 @@ export function installCallCapture(): CallCapture {
   };
 
   globalThis.fetch = wrappers.fetch;
+  globalThis.Request = wrapRequest(original.Request);
   http.request = wrappers.httpRequest;
   http.get = wrappers.httpGet;
   https.request = wrappers.httpsRequest;
@@ -192,6 +221,7 @@ export function installCallCapture(): CallCapture {
     wrappers,
     restore() {
       globalThis.fetch = original.fetch;
+      globalThis.Request = original.Request;
       http.request = original.httpRequest;
       http.get = original.httpGet;
       https.request = original.httpsRequest;

@@ -28,6 +28,7 @@ export function isSentinel(error: unknown): boolean {
 export interface RequestObservation {
   readonly method: string;
   readonly url: string;
+  readonly initiator: unknown;
   readonly path: 'fetch' | 'http' | 'unknown';
   readonly stack: string | null;
   readonly signalAttached: boolean | null;
@@ -78,7 +79,13 @@ function classifyTeardown(held: HeldRequest): Settlement {
   if (socketTimeout !== null && realNow() - socketTimeout.armedAt >= socketTimeout.ms - TIMER_ROUNDING_MS) {
     return { outcome: 'aborted', firedMechanism: 'socket-timeout', abortKind: 'timeout', rawError };
   }
-  return { outcome: 'aborted', firedMechanism: null, abortKind: 'abort', rawError };
+  const destroyedByCaller = held.metadata !== null && initiator instanceof http.ClientRequest;
+  return {
+    outcome: 'aborted',
+    firedMechanism: destroyedByCaller ? 'manual-destroy' : null,
+    abortKind: 'abort',
+    rawError,
+  };
 }
 
 function observe(held: HeldRequest): RequestObservation {
@@ -86,6 +93,7 @@ function observe(held: HeldRequest): RequestObservation {
   return {
     method: event.request.method,
     url: event.request.url,
+    initiator: event.initiator,
     path: metadata?.path ?? 'unknown',
     stack: metadata?.stack ?? null,
     signalAttached: metadata?.signalAttached ?? null,

@@ -12,6 +12,22 @@ import {
 import { viaFetch, viaHttpGet, viaHttpRequest, viaNamedGet } from '../fixtures/call-sites/calls.js';
 
 const HOST = 'http://blackhole.chimpd.invalid';
+const earlyRequest = new Request(`${HOST}/early`, { signal: new AbortController().signal });
+const RequestBeforeInstall = Request;
+const prototypeBeforeInstall = Request.prototype;
+const staticsBeforeInstall = Object.getOwnPropertyDescriptors(Request);
+
+function constructWithoutNew(constructor: unknown): unknown {
+  try {
+    (constructor as (input: string) => unknown)(`${HOST}/no-new`);
+  } catch (error) {
+    return error;
+  }
+  throw new Error('expected a call without new to throw');
+}
+
+const errorBeforeInstall = constructWithoutNew(Request);
+
 const callsFile = fileURLToPath(new URL('../fixtures/call-sites/calls.ts', import.meta.url));
 
 let nextId = 0;
@@ -74,13 +90,40 @@ describe('observability contract', () => {
       expect(await observed(url)).toMatchObject({ path: 'fetch', signalAttached: false });
     });
 
-    it('cannot tell whether a Request passed to fetch was built with a signal', async () => {
+    it('reports whether a Request passed to fetch was built with a signal', async () => {
       const withSignal = uniqueUrl();
       const withoutSignal = uniqueUrl();
       quietFetch(new Request(withSignal, { signal: new AbortController().signal }));
       quietFetch(new Request(withoutSignal));
-      expect(await observed(withSignal)).toMatchObject({ path: 'fetch', signalAttached: null });
-      expect(await observed(withoutSignal)).toMatchObject({ path: 'fetch', signalAttached: null });
+      expect(await observed(withSignal)).toMatchObject({ path: 'fetch', signalAttached: true });
+      expect(await observed(withoutSignal)).toMatchObject({ path: 'fetch', signalAttached: false });
+    });
+
+    it('inherits the signal of a Request copied with new Request(existing)', async () => {
+      const copiedWith = uniqueUrl();
+      const copiedWithout = uniqueUrl();
+      const detached = uniqueUrl();
+      const replaced = uniqueUrl();
+      const signal = new AbortController().signal;
+      quietFetch(new Request(new Request(copiedWith, { signal })));
+      quietFetch(new Request(new Request(copiedWithout)));
+      quietFetch(new Request(new Request(detached, { signal }), { signal: null }));
+      quietFetch(new Request(new Request(replaced), { signal }));
+      expect(await observed(copiedWith)).toMatchObject({ signalAttached: true });
+      expect(await observed(copiedWithout)).toMatchObject({ signalAttached: false });
+      expect(await observed(detached)).toMatchObject({ signalAttached: false });
+      expect(await observed(replaced)).toMatchObject({ signalAttached: true });
+    });
+
+    it('lets fetch init override the signal of a Request input', async () => {
+      const url = uniqueUrl();
+      quietFetch(new Request(url), { signal: AbortSignal.timeout(6000) });
+      expect(await observed(url)).toMatchObject({ signalAttached: true, signalDeadlineMs: 6000 });
+    });
+
+    it('reports unknown for a Request built before the wrappers were installed', async () => {
+      quietFetch(earlyRequest);
+      expect(await observed(earlyRequest.url)).toMatchObject({ path: 'fetch', signalAttached: null });
     });
 
     it('reports a signal passed in http.request options', async () => {
@@ -129,11 +172,15 @@ describe('observability contract', () => {
       expect(await observed(url)).toMatchObject({ signalAttached: true, signalDeadlineMs: null });
     });
 
-    it('loses the deadline of a signal given to a Request, but still sees it fire', async () => {
+    it('recognizes AbortSignal.timeout(100) given to a Request, directly and through a copy', async () => {
+      const copyUrl = uniqueUrl();
+      quietFetch(new Request(new Request(copyUrl, { signal: AbortSignal.timeout(100) })));
+      expect(await observed(copyUrl)).toMatchObject({ signalAttached: true, signalDeadlineMs: 100 });
+
       const url = uniqueUrl();
       const request = new Request(url, { signal: AbortSignal.timeout(100) });
       quietFetch(request);
-      expect(await observed(url)).toMatchObject({ signalAttached: null, signalDeadlineMs: null });
+      expect(await observed(url)).toMatchObject({ signalAttached: true, signalDeadlineMs: 100 });
       const settled = await observed(url, (entry) => entry.outcome === 'aborted');
       expect(settled).toMatchObject({ firedMechanism: 'signal', abortKind: 'timeout' });
       // Node stops propagating the timeout once the Request is garbage collected, so it must stay reachable.
@@ -223,7 +270,7 @@ describe('observability contract', () => {
       expect(await observed(httpUrl, (entry) => entry.outcome !== 'pending')).toMatchObject(expected);
     });
 
-    it('reports a manual destroy as an abort with no deadline mechanism', async () => {
+    it('reports a manual destroy as an abort with the manual-destroy mechanism', async () => {
       const url = uniqueUrl();
       const request = viaHttpRequest(url);
       request.end();
@@ -231,7 +278,7 @@ describe('observability contract', () => {
       request.destroy();
       expect(await observed(url, (entry) => entry.outcome !== 'pending')).toMatchObject({
         outcome: 'aborted',
-        firedMechanism: null,
+        firedMechanism: 'manual-destroy',
         abortKind: 'abort',
       });
     });
@@ -302,6 +349,73 @@ describe('observability contract', () => {
       call(url);
       const { stack } = await observed(url);
       expect(stack?.replaceAll('\\', '/')).toContain(`fixtures/call-sites/calls.ts:${lineOf(snippet)}:`);
+    });
+  });
+
+  describe('correlation identity', () => {
+    it.each([
+      ['http.request', () => http.request(uniqueUrl())],
+      ['http.get', () => http.get(uniqueUrl())],
+      ['https.request', () => https.request(uniqueUrl('https://blackhole.chimpd.invalid'))],
+      ['https.get', () => https.get(uniqueUrl('https://blackhole.chimpd.invalid'))],
+    ])('hands the listener the ClientRequest returned by %s', async (_label, start) => {
+      const request = start();
+      request.on('error', () => undefined);
+      request.end();
+      const url = `${request.protocol}//${request.host}${request.path}`;
+      const { initiator } = await observed(url);
+      expect(initiator).toBe(request);
+    });
+  });
+
+  describe('Request wrapper transparency', () => {
+    it('keeps instanceof true for Requests from every origin', async () => {
+      expect(Request).not.toBe(RequestBeforeInstall);
+      expect(earlyRequest instanceof Request).toBe(true);
+      expect(new Request(uniqueUrl()) instanceof Request).toBe(true);
+      expect(new Request(uniqueUrl()) instanceof RequestBeforeInstall).toBe(true);
+      expect(new RequestBeforeInstall(uniqueUrl()) instanceof Request).toBe(true);
+
+      const url = uniqueUrl();
+      quietFetch(url);
+      const { initiator } = await observed(url);
+      expect(initiator instanceof Request).toBe(true);
+      expect(initiator instanceof RequestBeforeInstall).toBe(true);
+    });
+
+    it('leaves the prototype and static members unchanged', () => {
+      expect(Request.prototype).toBe(prototypeBeforeInstall);
+      expect(Request.prototype.constructor).toBe(RequestBeforeInstall);
+      expect(Object.getOwnPropertyDescriptors(Request)).toEqual(staticsBeforeInstall);
+      expect(Request.name).toBe(RequestBeforeInstall.name);
+      expect(Request.length).toBe(RequestBeforeInstall.length);
+      expect(typeof Request).toBe('function');
+      expect(Object.getPrototypeOf(new Request(uniqueUrl()))).toBe(prototypeBeforeInstall);
+    });
+
+    it('throws exactly as before when called without new', () => {
+      const error = constructWithoutNew(Request);
+      expect(error).toBeInstanceOf(TypeError);
+      expect(Object.getPrototypeOf(error)).toBe(Object.getPrototypeOf(errorBeforeInstall));
+      expect((error as Error).message).toBe((errorBeforeInstall as Error).message);
+    });
+
+    it('supports subclasses and records their signals', async () => {
+      class TaggedRequest extends Request {
+        readonly tag = 'tagged';
+      }
+      const url = uniqueUrl();
+      const request = new TaggedRequest(url, { signal: AbortSignal.timeout(8000) });
+      expect(request).toBeInstanceOf(TaggedRequest);
+      expect(request.tag).toBe('tagged');
+      quietFetch(request);
+      expect(await observed(url)).toMatchObject({ signalAttached: true, signalDeadlineMs: 8000 });
+    });
+
+    it('restores the original Request on dispose', () => {
+      interception.dispose();
+      expect(Request).toBe(RequestBeforeInstall);
+      interception = installBlackHole(['fetch', 'client-request']);
     });
   });
 

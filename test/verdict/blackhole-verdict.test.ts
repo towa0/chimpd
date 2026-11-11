@@ -3,6 +3,7 @@ import type { BlackHoleObservation, BlackHoleVerdict } from '../../src/core/inde
 import { classifyBlackHole, hasDeadline } from '../../src/verdict/index.js';
 
 const base: BlackHoleObservation = {
+  metadataCaptured: true,
   signalAttached: false,
   signalDeadlineMs: null,
   socketTimeoutMs: null,
@@ -77,6 +78,26 @@ const rows: Row[] = [
     { signalAttached: null, socketTimeoutMs: 9000, deadlineHit: true },
     { verdict: 'long-timeout', findingKind: 'timeout-exceeds-budget', deadlineMs: 9000 },
   ],
+  [
+    'manual destroy, test passed',
+    { requestState: 'aborted', firedMechanism: 'manual-destroy', abortKind: 'abort' },
+    { verdict: 'handled-timeout', findingKind: null, firedMechanism: 'manual-destroy', deadlineMs: null },
+  ],
+  [
+    'manual destroy, test failed',
+    { requestState: 'aborted', firedMechanism: 'manual-destroy', abortKind: 'abort', testOutcome: 'failed' },
+    { verdict: 'timeout-mishandled', findingKind: 'abort-mishandled', firedMechanism: 'manual-destroy' },
+  ],
+  [
+    'no captured metadata, deadline hit',
+    { metadataCaptured: false, signalAttached: null, deadlineHit: true, testOutcome: 'failed' },
+    { verdict: 'inconclusive', findingKind: null },
+  ],
+  [
+    'no captured metadata, deadline hit, even if fields claim no signal',
+    { metadataCaptured: false, signalAttached: false, socketTimeoutMs: null, deadlineHit: true },
+    { verdict: 'inconclusive', findingKind: null },
+  ],
   ['test passed, request pending', {}, { verdict: 'detached', findingKind: 'fire-and-forget' }],
   [
     'test failed before the deadline, request pending',
@@ -85,27 +106,66 @@ const rows: Row[] = [
   ],
 ];
 
+function pendingStates(): Partial<BlackHoleObservation>[] {
+  const states: Partial<BlackHoleObservation>[] = [];
+  for (const metadataCaptured of [true, false]) {
+    for (const signalAttached of [true, false, null]) {
+      for (const socketTimeoutMs of [null, 50]) {
+        for (const deadlineHit of [true, false]) {
+          for (const testOutcome of ['passed', 'failed'] as const) {
+            states.push({ metadataCaptured, signalAttached, socketTimeoutMs, deadlineHit, testOutcome });
+          }
+        }
+      }
+    }
+  }
+  return states;
+}
+
 describe('black hole verdict table', () => {
   it.each(rows)('%s', (_label, observation, expected) => {
     expect(classifyBlackHole({ ...base, ...observation })).toMatchObject(expected);
   });
 
   it('never classifies a request with a signal or socket timeout as a hang', () => {
-    const states: Partial<BlackHoleObservation>[] = [];
-    for (const signalAttached of [true, false, null]) {
-      for (const socketTimeoutMs of [null, 50]) {
-        for (const deadlineHit of [true, false]) {
-          for (const testOutcome of ['passed', 'failed'] as const) {
-            states.push({ signalAttached, socketTimeoutMs, deadlineHit, testOutcome });
-          }
-        }
-      }
-    }
-    for (const state of states) {
+    let hangs = 0;
+    for (const state of pendingStates()) {
       const observation = { ...base, ...state };
       const { verdict } = classifyBlackHole(observation);
-      if (hasDeadline(observation) || observation.signalAttached === null) {
-        expect(verdict, JSON.stringify(state)).not.toBe('hang');
+      const mayHang =
+        observation.metadataCaptured && observation.signalAttached === false && !hasDeadline(observation);
+      if (!mayHang) expect(verdict, JSON.stringify(state)).not.toBe('hang');
+      if (verdict === 'hang') hangs += 1;
+    }
+    expect(hangs).toBeGreaterThan(0);
+  });
+
+  it('never reaches hang for a request without captured metadata', () => {
+    for (const state of pendingStates()) {
+      const { verdict } = classifyBlackHole({ ...base, ...state, metadataCaptured: false });
+      expect(verdict, JSON.stringify(state)).not.toBe('hang');
+    }
+  });
+
+  it('gives the same verdict whether a socket timeout or a manual destroy ended the request', () => {
+    for (const socketTimeoutMs of [null, 50]) {
+      for (const signalAttached of [true, false, null]) {
+        for (const testOutcome of ['passed', 'failed'] as const) {
+          for (const errorEscaped of [true, false]) {
+            const aborted = {
+              ...base,
+              socketTimeoutMs,
+              signalAttached,
+              testOutcome,
+              errorEscaped,
+              requestState: 'aborted' as const,
+            };
+            const bySocket = classifyBlackHole({ ...aborted, firedMechanism: 'socket-timeout', abortKind: 'timeout' });
+            const byDestroy = classifyBlackHole({ ...aborted, firedMechanism: 'manual-destroy', abortKind: 'abort' });
+            expect(byDestroy.verdict).toBe(bySocket.verdict);
+            expect(byDestroy.findingKind).toBe(bySocket.findingKind);
+          }
+        }
       }
     }
   });
