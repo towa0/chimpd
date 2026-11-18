@@ -1,4 +1,5 @@
-import { countLines, mergeRangesByFile, priorOf, type LineInterval, type ScopeRange } from '../core/index.js';
+import { countLines, mergeRangesByFile, type LineInterval, type ScopeRange } from '../core/index.js';
+import { priorOf } from '../severity/index.js';
 
 export interface BatchFile {
   readonly file: string;

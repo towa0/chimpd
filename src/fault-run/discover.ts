@@ -1,9 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { priorOf, toPosix, type ScopeRange } from '../core/index.js';
+import { toPosix, type ScopeRange } from '../core/index.js';
 import { callSiteKey, projectFrames, type ProjectFrame } from '../fault-recon/call-site.js';
 import { pristineFingerprints, type Fingerprints } from '../fault-recon/conflicts.js';
 import type { VitestNodeModule } from '../fault-recon/index.js';
+import { priorOf } from '../severity/index.js';
 import { runInstrumented, type TestRecord } from './instrumented.js';
 import { scopeOf } from './select.js';
 import type { CallSite, Discovery, FileConflict, ReachingTest } from './types.js';
