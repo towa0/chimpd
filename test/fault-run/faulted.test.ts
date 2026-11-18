@@ -223,6 +223,10 @@ describe('faulted run timeouts', () => {
       const app = createSampleApp();
       try {
         history.clientChanges(app);
+        // Discovery runs under the target's own timeout, so it must not depend on a body finishing within 100 ms.
+        const discovery = await discover(app);
+        const site = siteAt(discovery, app, 'src/clients/profile.ts', 'await fetch(');
+        expect(site.reachedBy).toHaveLength(1);
         app.write(
           'vitest.config.ts',
           [
@@ -233,8 +237,7 @@ describe('faulted run timeouts', () => {
           ].join('\n'),
         );
         app.commit('Shorten the test timeout');
-        const discovery = await discover(app);
-        const run = await fault(app, siteAt(discovery, app, 'src/clients/profile.ts', 'await fetch('));
+        const run = await fault(app, site);
         expect(run.tests[0]?.observations).toEqual([
           expect.objectContaining({ requestState: 'pending', deadlineHit: true }),
         ]);
