@@ -36,6 +36,21 @@ export const history = {
     return repo.commit('Add a refund cap test');
   },
 
+  /** Touches each outgoing call: the fetch lines themselves, and for the ledger a line next to the call. */
+  clientChanges(repo: TempRepo): string {
+    repo.edit('src/clients/inventory.ts', 'AbortSignal.timeout(100)', 'AbortSignal.timeout(150)');
+    repo.edit(
+      'src/clients/profile.ts',
+      'fetch(`${baseUrl}/profiles/${id}`)',
+      "fetch(`${baseUrl}/profiles/${id}`, { headers: { accept: 'application/json' } })",
+    );
+    repo.edit('src/telemetry.ts', 'JSON.stringify({ name })', "JSON.stringify({ name, source: 'app' })");
+    repo.edit('src/clients/ledger.ts', "'application/json'", "'application/json; charset=utf-8'");
+    repo.edit('src/notifications.ts', 'JSON.stringify({ message })', "JSON.stringify({ message, channel: 'email' })");
+    repo.edit('src/clients/rates.ts', '/rates/${currency}', '/rates/${currency}?precision=4');
+    return repo.commit('Adjust the outgoing calls');
+  },
+
   staticChange(repo: TempRepo): string {
     repo.edit(
       'src/config.ts',

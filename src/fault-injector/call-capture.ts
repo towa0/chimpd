@@ -28,6 +28,7 @@ const signalDeadlines = new WeakMap<AbortSignal, number>();
 const httpCalls = new WeakMap<http.ClientRequest, CallMetadata>();
 const requestTimeouts = new WeakMap<http.ClientRequest, SocketTimeout>();
 const fetchCalls = new AsyncLocalStorage<CallMetadata>();
+const openingCalls = new AsyncLocalStorage<CallMetadata>();
 
 interface RequestSignalRecord {
   readonly signalAttached: boolean;
@@ -105,9 +106,12 @@ function keepIdentity<T extends Callable>(wrapper: Callable, original: T): T {
   return wrapper as T;
 }
 
-function wrapFetch(original: typeof fetch): typeof fetch {
+type OnCall = ((metadata: CallMetadata) => void) | undefined;
+
+function wrapFetch(original: typeof fetch, onCall: OnCall): typeof fetch {
   const wrapper = function (this: unknown, ...args: unknown[]): Promise<Response> {
     const metadata = captureFetch(args[0], args[1], wrapper);
+    onCall?.(metadata);
     return fetchCalls.run(metadata, () => Reflect.apply(original, this, args) as Promise<Response>);
   };
   return keepIdentity(wrapper, original);
@@ -124,10 +128,28 @@ function wrapRequest(original: typeof Request): typeof Request {
   });
 }
 
-function wrapHttpCall<T extends typeof http.request>(original: T): T {
+// A request that reuses an idle keep-alive socket opens no connection, so nothing could claim it.
+function closeIdleSockets(args: readonly unknown[], defaultAgent: http.Agent): void {
+  const { agent } = httpOptions(args) as { agent?: unknown };
+  if (agent === false) return;
+  const target = agent instanceof http.Agent ? agent : defaultAgent;
+  for (const sockets of Object.values(target.freeSockets)) {
+    for (const socket of sockets ?? []) socket.destroy();
+  }
+}
+
+interface HttpCallHooks {
+  readonly onCall: OnCall;
+  readonly needsFreshConnection: ((metadata: CallMetadata) => boolean) | undefined;
+  readonly defaultAgent: () => http.Agent;
+}
+
+function wrapHttpCall<T extends typeof http.request>(original: T, hooks: HttpCallHooks): T {
   const wrapper = function (this: unknown, ...args: unknown[]): http.ClientRequest {
     const metadata = captureHttp(args, wrapper);
-    const request = Reflect.apply(original, this, args) as http.ClientRequest;
+    hooks.onCall?.(metadata);
+    if (hooks.needsFreshConnection?.(metadata) === true) closeIdleSockets(args, hooks.defaultAgent());
+    const request = openingCalls.run(metadata, () => Reflect.apply(original, this, args) as http.ClientRequest);
     httpCalls.set(request, metadata);
     return request;
   };
@@ -185,7 +207,16 @@ export interface CallCapture {
   restore(): void;
 }
 
-export function installCallCapture(): CallCapture {
+export interface CallCaptureOptions {
+  readonly onCall?: (metadata: CallMetadata) => void;
+  /** Calls for which an http request must open its own connection instead of reusing an idle one. */
+  readonly needsFreshConnection?: (metadata: CallMetadata) => boolean;
+}
+
+export function installCallCapture(options: CallCaptureOptions = {}): CallCapture {
+  const { onCall, needsFreshConnection } = options;
+  const plain: HttpCallHooks = { onCall, needsFreshConnection, defaultAgent: () => http.globalAgent };
+  const secure: HttpCallHooks = { onCall, needsFreshConnection, defaultAgent: () => https.globalAgent };
   const original = {
     fetch: globalThis.fetch,
     Request: globalThis.Request,
@@ -198,11 +229,11 @@ export function installCallCapture(): CallCapture {
     signalAny: detach(AbortSignal, 'any'),
   };
   const wrappers = {
-    fetch: wrapFetch(original.fetch),
-    httpRequest: wrapHttpCall(original.httpRequest),
-    httpGet: wrapHttpCall(original.httpGet),
-    httpsRequest: wrapHttpCall(original.httpsRequest),
-    httpsGet: wrapHttpCall(original.httpsGet),
+    fetch: wrapFetch(original.fetch, onCall),
+    httpRequest: wrapHttpCall(original.httpRequest, plain),
+    httpGet: wrapHttpCall(original.httpGet, plain),
+    httpsRequest: wrapHttpCall(original.httpsRequest, secure),
+    httpsGet: wrapHttpCall(original.httpsGet, secure),
   };
 
   globalThis.fetch = wrappers.fetch;
@@ -238,6 +269,11 @@ export function metadataFor(initiator: unknown): CallMetadata | null {
   if (initiator instanceof http.ClientRequest) return httpCalls.get(initiator) ?? null;
   if (initiator instanceof Request) return fetchCalls.getStore() ?? null;
   return null;
+}
+
+/** The call whose entry point is on the current async path, as seen by a socket it opens. */
+export function callInProgress(): CallMetadata | null {
+  return openingCalls.getStore() ?? fetchCalls.getStore() ?? null;
 }
 
 export function socketTimeoutFor(initiator: unknown, metadata: CallMetadata | null): SocketTimeout | null {

@@ -30,6 +30,7 @@ export interface RequestObservation {
   readonly initiator: unknown;
   readonly path: 'fetch' | 'http' | 'unknown';
   readonly stack: string | null;
+  readonly metadata: CallMetadata | null;
   readonly signalAttached: boolean | null;
   readonly signalDeadlineMs: number | null;
   readonly socketTimeoutMs: number | null;
@@ -95,6 +96,7 @@ function observe(held: HeldRequest): RequestObservation {
     initiator: event.initiator,
     path: metadata?.path ?? 'unknown',
     stack: metadata?.stack ?? null,
+    metadata,
     signalAttached: metadata?.signalAttached ?? null,
     signalDeadlineMs: metadata?.signalDeadlineMs ?? null,
     socketTimeoutMs: socketTimeoutFor(event.initiator, metadata)?.ms ?? null,

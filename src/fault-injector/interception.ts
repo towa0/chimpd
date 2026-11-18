@@ -3,7 +3,13 @@ import { ClientRequestInterceptor } from '@mswjs/interceptors/ClientRequest';
 import { FetchInterceptor } from '@mswjs/interceptors/fetch';
 import { SocketInterceptor } from '@mswjs/interceptors/net';
 import { BlackHole } from './blackhole.js';
-import { installCallCapture, type CallCapture } from './call-capture.js';
+import {
+  callInProgress,
+  installCallCapture,
+  metadataFor,
+  type CallCapture,
+  type CallMetadata,
+} from './call-capture.js';
 
 export type InterceptionPath = 'fetch' | 'client-request';
 
@@ -16,14 +22,26 @@ export interface BlackHoleInterception {
 // SocketController.PENDING; the class is not exported from the package.
 const SOCKET_PENDING = 0;
 
-export function installBlackHole(paths: readonly InterceptionPath[]): BlackHoleInterception {
+export interface BlackHoleOptions {
+  /** Decides per call whether it is held; a call that is not held reaches the network untouched. */
+  readonly shouldHold?: (metadata: CallMetadata | null) => boolean;
+  readonly onCall?: (metadata: CallMetadata) => void;
+}
+
+export function installBlackHole(
+  paths: readonly InterceptionPath[],
+  options: BlackHoleOptions = {},
+): BlackHoleInterception {
+  const shouldHold = options.shouldHold ?? (() => true);
   const blackHole = new BlackHole();
   const interceptors = paths.map((path) =>
     path === 'fetch' ? new FetchInterceptor() : new ClientRequestInterceptor(),
   );
   for (const interceptor of interceptors) {
     interceptor.apply();
-    interceptor.on('request', (event) => blackHole.hold(event));
+    interceptor.on('request', (event) => {
+      if (shouldHold(metadataFor(event.initiator))) return blackHole.hold(event);
+    });
   }
 
   // Claiming completes the mock connection, so the black hole is a server that accepts and
@@ -32,12 +50,15 @@ export function installBlackHole(paths: readonly InterceptionPath[]): BlackHoleI
   const sockets = Interceptor.singleton(SocketInterceptor);
   const owner = {};
   const claim: Parameters<typeof sockets.on<'connection'>>[1] = ({ controller }) => {
-    if (controller.readyState === SOCKET_PENDING) controller.claim();
+    if (controller.readyState === SOCKET_PENDING && shouldHold(callInProgress())) controller.claim();
   };
   sockets.apply(owner);
   sockets.on('connection', claim);
 
-  const capture = installCallCapture();
+  const capture = installCallCapture({
+    ...(options.onCall === undefined ? {} : { onCall: options.onCall }),
+    ...(options.shouldHold === undefined ? {} : { needsFreshConnection: options.shouldHold }),
+  });
 
   return {
     blackHole,
