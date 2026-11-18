@@ -77,6 +77,7 @@ function startRecon(write: Write): Session {
 }
 
 interface RunningBody {
+  readonly calls: CallMetadata[];
   targetedCalls: number;
   frozen: HeldObservation[] | null;
   timer: ReturnType<typeof setTimeout> | null;
@@ -112,6 +113,7 @@ function startFault(mode: FaultMode): Session {
       const innermost = projectFrames(parseStack(metadata.stack), mode.targetRoot)[0];
       if (innermost === undefined || callSiteKey(innermost) !== mode.siteKey) return;
       active.targetedCalls += 1;
+      active.calls.push(metadata);
       owners.set(metadata, current);
     },
     shouldHold: (metadata) => metadata !== null && owners.has(metadata),
@@ -126,7 +128,7 @@ function startFault(mode: FaultMode): Session {
   return {
     includes: (task) => selected.has(task.id),
     begin(current) {
-      const active: RunningBody = { targetedCalls: 0, frozen: null, timer: null };
+      const active: RunningBody = { calls: [], targetedCalls: 0, frozen: null, timer: null };
       running.set(current, active);
       active.timer = realSetTimeout(() => {
         const atDeadline = snapshot(current, true);
@@ -147,6 +149,8 @@ function startFault(mode: FaultMode): Session {
       if (active.timer !== null) realClearTimeout(active.timer);
       const observations = active.frozen ?? snapshot(current, false);
       interception.blackHole.release();
+      // Client pools reconnect later in the async context of these calls; holding them past the body would black-hole whoever reuses the connection.
+      for (const metadata of active.calls) owners.delete(metadata);
       return { targetedCalls: active.targetedCalls, observations };
     },
     dispose: () => interception.dispose(),
