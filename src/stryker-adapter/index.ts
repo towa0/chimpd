@@ -3,12 +3,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   ensureWorkDir,
+  realClock,
   excludedMutators,
   PRESETS,
   rangeForLine,
   removeTree,
   startBudget,
   toPosix,
+  type Clock,
   type Intensity,
   type MutantRecord,
   type MutantStatus,
@@ -18,14 +20,14 @@ import { planBatches, type Batch } from './batches.js';
 import { decideChecker, strykerVersion, type CheckerDecision } from './checker.js';
 import { buildStrykerOptions, STRYKER_TEMP_DIR } from './options.js';
 import { runWorker, workerPath } from './process.js';
-import type { WireMutant, WireTest } from './worker.js';
+import type { WireMutant, WireTest, WorkerMessage } from './worker.js';
 
 export { escapeGlob, mutatePatterns, planBatches } from './batches.js';
 export type { Batch, BatchFile } from './batches.js';
 export { decideChecker, resolveCheckerTypeScript, strykerVersion } from './checker.js';
 export type { CheckerDecision } from './checker.js';
 export { buildStrykerOptions, STRYKER_TEMP_DIR } from './options.js';
-export type { WireMutant } from './worker.js';
+export type { WireMutant, WorkerMessage } from './worker.js';
 
 export interface MutationRequest {
   readonly targetRoot: string;
@@ -37,6 +39,10 @@ export interface MutationRequest {
   readonly vitestConfigFile?: string;
   /** Replaces the Stryker child process entry point; it must also be loadable as the reporter plugin. */
   readonly workerEntry?: string;
+  /** Measures the budget and times the kills; wall time when omitted. */
+  readonly clock?: Clock;
+  /** Sees every progress message of a batch after the adapter has recorded it. */
+  readonly onWorkerMessage?: (message: WorkerMessage) => void;
 }
 
 export type BatchOutcome = 'completed' | 'failed' | 'killed-over-share' | 'killed-budget' | 'not-launched';
@@ -188,6 +194,7 @@ async function runBatch(batch: Batch, context: BatchContext): Promise<BatchRun> 
     cwd: request.targetRoot,
     killAfterMs: Math.min(overShareMs, remainingMs),
     entry,
+    clock: request.clock ?? realClock,
     options: buildStrykerOptions({
       batch,
       preset: PRESETS[request.intensity],
@@ -208,6 +215,7 @@ async function runBatch(batch: Batch, context: BatchContext): Promise<BatchRun> 
       } else if (message.type === 'mutant') {
         tested.set(message.mutant.id, message.mutant);
       }
+      request.onWorkerMessage?.(message);
     },
   });
 
@@ -240,7 +248,8 @@ function failedTypeCheck(run: BatchRun): boolean {
 export async function runMutation(request: MutationRequest): Promise<MutationResult> {
   const preset = PRESETS[request.intensity];
   const batches = planBatches(request.ranges, preset.maxBatches);
-  const budget = startBudget(request.budgetMs);
+  const clock = request.clock ?? realClock;
+  const budget = startBudget(request.budgetMs, () => clock.now());
   const configFile = path.join(ensureWorkDir(request.targetRoot), EMPTY_CONFIG_FILE);
   fs.writeFileSync(configFile, '{}\n');
   let checker = decideChecker(request.targetRoot);

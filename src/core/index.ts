@@ -17,7 +17,8 @@ export type {
 } from './types.js';
 export { startBudget } from './budget.js';
 export type { Budget } from './budget.js';
-export { realClearTimeout, realNow, realSetTimeout } from './clock.js';
+export { realClearTimeout, realClock, realNow, realSetTimeout } from './clock.js';
+export type { Clock } from './clock.js';
 export { git, GitError, mergeBase, resolveSha } from './git.js';
 export { isDeclarationFile, isTestFile, isTypeScriptFile, toPosix } from './paths.js';
 export { decideIgnoreStatic, excludedMutators, PRESETS, STRYKER_MUTATORS } from './presets.js';

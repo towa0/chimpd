@@ -1,6 +1,6 @@
 import { fork, spawnSync, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { realClearTimeout, realNow, realSetTimeout } from '../core/index.js';
+import { realClock, type Clock } from '../core/index.js';
 import type { StartMessage, StrykerOptions, WorkerMessage } from './worker.js';
 
 export type WorkerOutcome = 'completed' | 'failed' | 'killed';
@@ -16,6 +16,7 @@ export interface WorkerRequest {
   readonly options: StrykerOptions;
   readonly killAfterMs: number;
   readonly entry?: string;
+  readonly clock?: Clock;
   onMessage(message: WorkerMessage): void;
 }
 
@@ -48,7 +49,8 @@ function killTree(child: ChildProcess): void {
 }
 
 export function runWorker(request: WorkerRequest): Promise<WorkerRun> {
-  const startedAt = realNow();
+  const clock = request.clock ?? realClock;
+  const startedAt = clock.now();
   return new Promise((resolve) => {
     const entry = request.entry ?? workerPath();
     const child = fork(entry, [], {
@@ -68,7 +70,7 @@ export function runWorker(request: WorkerRequest): Promise<WorkerRun> {
       stderr = (stderr + chunk.toString('utf8')).slice(-4000);
     });
 
-    const timer = realSetTimeout(() => {
+    const timer = clock.setTimeout(() => {
       outcome ??= 'killed';
       killTree(child);
     }, Math.max(0, request.killAfterMs));
@@ -88,12 +90,12 @@ export function runWorker(request: WorkerRequest): Promise<WorkerRun> {
     });
 
     child.on('close', (code) => {
-      realClearTimeout(timer);
+      clock.clearTimeout(timer);
       if (outcome === null) {
         outcome = 'failed';
         error = `the Stryker process exited with code ${String(code)} before reporting a result: ${stderr.trim()}`;
       }
-      resolve({ outcome, elapsedMs: realNow() - startedAt, error });
+      resolve({ outcome, elapsedMs: clock.now() - startedAt, error });
     });
 
     child.send({ type: 'start', options: request.options } satisfies StartMessage);

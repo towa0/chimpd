@@ -2,14 +2,50 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { ScopeRange } from '../../src/core/index.js';
-import { runMutation } from '../../src/stryker-adapter/index.js';
+import type { Clock, ScopeRange } from '../../src/core/index.js';
+import { runMutation, type WorkerMessage } from '../../src/stryker-adapter/index.js';
 import { createTempRepo, type TempRepo } from '../helpers/temp-repo.js';
 
 const fakeWorker = fileURLToPath(new URL('../fixtures/fake-stryker-worker.mjs', import.meta.url));
 
 function range(file: string): ScopeRange {
   return { file, startLine: 1, endLine: 5, kind: 'changed', staticRegion: false };
+}
+
+interface ManualClock extends Clock {
+  fireNext(): void;
+}
+
+/** Time moves only when a timer is fired, so a kill lands exactly when the test decides. */
+function manualClock(): ManualClock {
+  let time = 0;
+  let nextId = 0;
+  const timers = new Map<number, { at: number; callback: () => void }>();
+  return {
+    now: () => time,
+    setTimeout(callback, ms) {
+      nextId += 1;
+      timers.set(nextId, { at: time + ms, callback });
+      return nextId;
+    },
+    clearTimeout(handle) {
+      timers.delete(handle as number);
+    },
+    fireNext() {
+      const [id, timer] = [...timers].sort(([, a], [, b]) => a.at - b.at)[0] ?? [];
+      if (id === undefined || timer === undefined) throw new Error('no timer is pending');
+      timers.delete(id);
+      time = Math.max(time, timer.at);
+      timer.callback();
+    },
+  };
+}
+
+// The fake worker sends its result last, so killing on it leaves every earlier message delivered.
+function killOnResult(clock: ManualClock): (message: WorkerMessage) => void {
+  return (message) => {
+    if (message.type === 'mutant') clock.fireNext();
+  };
 }
 
 function isAlive(pid: number): boolean {
@@ -90,6 +126,7 @@ describe('budget enforcement', () => {
   });
 
   it('kills a batch at twice its share and stops launching once the budget is spent', async () => {
+    const clock = manualClock();
     const result = await runMutation({
       targetRoot: repo.dir,
       ranges: [range('src/a.ts'), range('src/b.ts'), range('src/c.ts')],
@@ -97,6 +134,8 @@ describe('budget enforcement', () => {
       ignoreStatic: true,
       budgetMs: 1800,
       workerEntry: fakeWorker,
+      clock,
+      onWorkerMessage: killOnResult(clock),
     });
 
     expect(result.batches.map((batch) => [batch.files, batch.outcome])).toEqual([
@@ -109,6 +148,22 @@ describe('budget enforcement', () => {
     expect(first?.elapsedMs).toBeLessThan(1700);
     expect(second?.elapsedMs).toBeLessThan(900);
     expect(result.notTested.unplannedFiles).toEqual(['src/c.ts']);
+    expect(await waitUntilDead(grandchildren())).toBe(true);
+  });
+
+  it('measures the budget and kills on the injected clock, not on wall time', { timeout: 10_000 }, async () => {
+    const clock = manualClock();
+    const result = await runMutation({
+      targetRoot: repo.dir,
+      ranges: [range('src/a.ts')],
+      intensity: 1,
+      ignoreStatic: true,
+      budgetMs: 3_600_000,
+      workerEntry: fakeWorker,
+      clock,
+      onWorkerMessage: killOnResult(clock),
+    });
+    expect(result.batches).toMatchObject([{ outcome: 'killed-budget', planned: 3, tested: 1, elapsedMs: 3_600_000 }]);
     expect(await waitUntilDead(grandchildren())).toBe(true);
   });
 
