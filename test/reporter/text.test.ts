@@ -1,0 +1,194 @@
+import { describe, expect, it } from 'vitest';
+import { renderText } from '../../src/reporter/index.js';
+import { faultFinding, mutationFinding, runResult } from '../helpers/run-fixtures.js';
+
+const PRINTABLE = /^[\n\x20-\x7e]*$/;
+
+describe('text report', () => {
+  it('renders a complete run with findings, most severe first', () => {
+    expect(renderText(runResult())).toBe(
+      [
+        'Poke run, budget 120.0 s, spent 45.3 s, seed 42',
+        'Diff: 2222222 against origin/main (merge base 1111111)',
+        '',
+        'Scope: 2 changed source files, 0 changed test files',
+        '  src/clients/ledger.ts',
+        '  src/discount.ts',
+        '',
+        'Coverage: 12 mutants and 3 call sites checked',
+        '  nothing in scope was left unchecked',
+        '',
+        'Findings, most severe first:',
+        '  1. [high 70] src/clients/ledger.ts:12:20 in postLedgerEntry',
+        '    hang-no-timeout: the call has no timeout of its own and relies on runtime transport defaults',
+        '    faulted under: test/ledger.test.ts > posts a ledger entry',
+        '  2. [medium 55] src/discount.ts:3:7',
+        '    survived: EqualityOperator mutant survived every test that covers it: orderTotal > 120',
+        '',
+        'Phases:',
+        '  mutation completed 30.0 s of 84.0 s',
+        '  faults completed 15.0 s of 90.0 s',
+        '',
+        'Result: 2 findings (exit 1)',
+        '',
+      ].join('\n'),
+    );
+  });
+
+  it('shows only as many findings as the preset allows and says how many more there are', () => {
+    const findings = [faultFinding(), ...[3, 9, 10].map((line) => mutationFinding({ line }))];
+    const text = renderText(runResult({ findings }));
+    expect(text).toContain('  3. [medium 55] src/discount.ts:9:7');
+    expect(text).not.toContain('src/discount.ts:10:7');
+    expect(text).toContain('  1 more finding not shown; --json lists every finding');
+    expect(renderText(runResult({ level: 'prod', findings }))).toContain('src/discount.ts:10:7');
+  });
+
+  it('groups skipped items by reason and lists inconclusive items and conflicts one per line', () => {
+    const text = renderText(
+      runResult({
+        status: 'partial',
+        findings: [],
+        skipped: [
+          { source: 'mutation', file: 'src/a.ts', line: 2, reason: 'not tested: budget' },
+          { source: 'mutation', file: 'src/a.ts', line: 5, reason: 'not tested: budget' },
+          { source: 'fault', file: 'src/b.ts', line: 3, reason: 'not faulted: over the preset cap of 3 call sites' },
+        ],
+        inconclusive: [{ source: 'fault', file: 'src/c.ts', line: 7, reason: 'the test did not reach the call site under the fault' }],
+        conflicts: [{ testFile: 'test/n.test.ts', patched: ['fetch'] }],
+      }),
+    );
+    expect(text).toContain(
+      [
+        'Skipped (3):',
+        '  mutation: not tested: budget (2 items)',
+        '    src/a.ts:2, src/a.ts:5',
+        '  fault: not faulted: over the preset cap of 3 call sites (1 item)',
+        '    src/b.ts:3',
+        '',
+        'Inconclusive (1):',
+        '  src/c.ts:7 fault: the test did not reach the call site under the fault',
+        '',
+        'Conflicts, calls made under these test files were not faulted:',
+        '  test/n.test.ts replaces fetch',
+      ].join('\n'),
+    );
+    expect(text).toContain('  NOT CHECKED: 3 skipped, 1 inconclusive, 1 conflicting test file; each is listed below');
+    expect(text.trimEnd().endsWith('Result: 0 findings, coverage partial: 5 not checked, listed above (exit 0; 2 with --strict)')).toBe(
+      true,
+    );
+  });
+
+  it('puts the coverage summary before the findings', () => {
+    const text = renderText(runResult({ status: 'partial', inconclusive: [{ source: 'fault', file: 'src/c.ts', line: 7, reason: 'x' }] }));
+    expect(text.indexOf('NOT CHECKED')).toBeGreaterThan(-1);
+    expect(text.indexOf('NOT CHECKED')).toBeLessThan(text.indexOf('Findings, most severe first:'));
+  });
+
+  it('says what the exit code is under --strict', () => {
+    const partial = runResult({ status: 'partial', skipped: [{ source: 'fault', file: 'src/b.ts', line: 3, reason: 'over the cap' }] });
+    expect(renderText(partial)).toContain('Result: 2 findings, coverage partial: 1 not checked, listed above (exit 1; 2 with --strict)');
+    expect(renderText(partial, { strict: true })).toContain(
+      'Result: 2 findings, coverage partial: 1 not checked, listed above (exit 2, --strict)',
+    );
+    expect(renderText(runResult(), { strict: true })).toContain('Result: 2 findings (exit 1)');
+  });
+
+  it('reports a run that is inconclusive as a whole', () => {
+    const text = renderText(runResult({ status: 'inconclusive', findings: [], checked: { mutants: 0, invalidMutants: 0, callSites: 0 } }));
+    expect(text).toContain('Coverage: 0 mutants and 0 call sites checked');
+    expect(text).toContain('Result: inconclusive, a phase failed or nothing in scope could be checked; 0 findings (exit 2)');
+  });
+
+  it('counts invalid mutants separately', () => {
+    const text = renderText(runResult({ checked: { mutants: 4, invalidMutants: 2, callSites: 0 } }));
+    expect(text).toContain(
+      ['Coverage: 4 mutants and 0 call sites checked', '  2 invalid mutants failed to compile or crashed the runner'].join('\n'),
+    );
+  });
+
+  it('shows a phase that ran out of budget or did not run, with its reason', () => {
+    const text = renderText(
+      runResult({
+        status: 'partial',
+        phases: [
+          {
+            name: 'mutation',
+            status: 'budget-exhausted',
+            statusReason: 'the budget ran out before every mutant was tested',
+            budgetMs: 84_000,
+            spentMs: 84_100,
+          },
+          { name: 'faults', status: 'not-run', statusReason: 'no TypeScript source in scope to fault', budgetMs: 0, spentMs: 0 },
+        ],
+      }),
+    );
+    expect(text).toContain('  mutation budget-exhausted 84.1 s of 84.0 s: the budget ran out before every mutant was tested');
+    expect(text).toContain('  faults not-run: no TypeScript source in scope to fault');
+    expect(text).toContain(
+      '  NOT CHECKED: the mutation phase ended budget-exhausted: the budget ran out before every mutant was tested',
+    );
+    expect(text).not.toContain('NOT CHECKED: the faults phase');
+  });
+
+  it('says clean only when nothing was found and nothing was left unevaluated', () => {
+    expect(renderText(runResult({ findings: [] }))).toContain('Result: clean, everything in scope was checked (exit 0)');
+  });
+
+  it('reports a tool error with its message', () => {
+    const text = renderText(
+      runResult({ status: 'error', error: "base ref 'origin/main' does not resolve", git: null, scope: null, phases: [], findings: [] }),
+    );
+    expect(text).toBe(
+      [
+        'Poke run, budget 120.0 s, spent 45.3 s, seed 42',
+        '',
+        "Error: base ref 'origin/main' does not resolve",
+        '',
+        'Result: tool error (exit 2)',
+        '',
+      ].join('\n'),
+    );
+  });
+
+  it('reports nothing in scope', () => {
+    const text = renderText(runResult({ status: 'nothing-in-scope', findings: [] }));
+    expect(text).toContain('Result: nothing in scope (exit 0)');
+  });
+
+  it('describes a test-only run by the source it reached', () => {
+    const text = renderText(
+      runResult({
+        scope: {
+          mode: 'test-only',
+          changedSourceFiles: [],
+          changedTestFiles: ['test/refund-cap.test.ts'],
+          ignoredFiles: [],
+          notes: [],
+          boundaryFiles: ['src/payments/refund.ts'],
+        },
+      }),
+    );
+    expect(text).toContain(
+      [
+        'Scope: only test files changed; mutating the source they reach',
+        '  test/refund-cap.test.ts (test)',
+        '  src/payments/refund.ts (reached by a changed test)',
+      ].join('\n'),
+    );
+  });
+
+  it('mentions uncommitted changes', () => {
+    const base = runResult();
+    const text = renderText(runResult({ git: base.git === null ? null : { ...base.git, dirty: true } }));
+    expect(text).toContain('(merge base 1111111), with uncommitted changes');
+  });
+
+  it('uses plain printable ASCII only: no color codes, no emoji', () => {
+    const noisy = runResult({
+      status: 'partial',
+      skipped: [{ source: 'mutation', file: 'src/a.ts', line: null, reason: 'mutants never planned: the budget ran out first' }],
+    });
+    for (const text of [renderText(runResult()), renderText(noisy)]) expect(text).toMatch(PRINTABLE);
+  });
+});

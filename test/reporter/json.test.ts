@@ -1,0 +1,191 @@
+import { describe, expect, it } from 'vitest';
+import { exitCodeOf, type RunResult } from '../../src/orchestrator/index.js';
+import { renderJson, SCHEMA_VERSION, toJsonReport } from '../../src/reporter/index.js';
+import { severityOf } from '../../src/severity/index.js';
+import { faultFinding, mutationFinding, runResult } from '../helpers/run-fixtures.js';
+
+type Shape =
+  | 'string'
+  | 'number'
+  | 'boolean'
+  | { readonly nullable: Shape }
+  | { readonly list: Shape }
+  | { readonly fields: Readonly<Record<string, Shape>> }
+  | { readonly oneOf: readonly string[] };
+
+const nullable = (shape: Shape): Shape => ({ nullable: shape });
+const list = (shape: Shape): Shape => ({ list: shape });
+const fields = (shape: Readonly<Record<string, Shape>>): Shape => ({ fields: shape });
+const oneOf = (...values: string[]): Shape => ({ oneOf: values });
+
+const ITEM = fields({ source: oneOf('mutation', 'fault'), file: 'string', line: nullable('number'), reason: 'string' });
+
+/** Schema version 1. Changing this object without bumping SCHEMA_VERSION is the mistake these tests exist to catch. */
+const SCHEMA_V1: Shape = fields({
+  schemaVersion: 'number',
+  status: oneOf('completed', 'partial', 'inconclusive', 'nothing-in-scope', 'error'),
+  exitCode: 'number',
+  strict: 'boolean',
+  error: nullable('string'),
+  level: oneOf('poke', 'prod', 'shake'),
+  preset: fields({ name: oneOf('Poke', 'Prod', 'Shake'), budgetMs: 'number', mutationShare: 'number' }),
+  budgetMs: 'number',
+  spentMs: 'number',
+  seed: 'number',
+  git: nullable(fields({ base: 'string', mergeBase: 'string', head: 'string', dirty: 'boolean' })),
+  scope: nullable(
+    fields({
+      mode: oneOf('diff', 'test-only'),
+      changedSourceFiles: list('string'),
+      changedTestFiles: list('string'),
+      boundaryFiles: list('string'),
+      ignoredFiles: list(fields({ file: 'string', reason: 'string' })),
+      notes: list(fields({ file: 'string', line: 'number', message: 'string' })),
+    }),
+  ),
+  phases: list(
+    fields({
+      name: oneOf('mutation', 'faults'),
+      status: oneOf('completed', 'budget-exhausted', 'inconclusive', 'error', 'not-run'),
+      statusReason: nullable('string'),
+      budgetMs: 'number',
+      spentMs: 'number',
+    }),
+  ),
+  findings: list(
+    fields({
+      source: oneOf('mutation', 'fault'),
+      kind: oneOf('survived', 'no-coverage', 'hang-no-timeout', 'abort-mishandled', 'timeout-exceeds-budget', 'fire-and-forget'),
+      file: 'string',
+      line: 'number',
+      column: 'number',
+      functionName: nullable('string'),
+      message: 'string',
+      severity: fields({ score: 'number', level: oneOf('high', 'medium', 'low'), base: 'number', prior: 'number' }),
+      mutation: nullable(
+        fields({
+          mutatorName: 'string',
+          replacement: 'string',
+          status: 'string',
+          endLine: 'number',
+          endColumn: 'number',
+          coveredBy: list('string'),
+        }),
+      ),
+      fault: nullable(fields({ verdict: 'string', path: oneOf('fetch', 'http'), tests: list('string') })),
+    }),
+  ),
+  coverage: fields({
+    checked: fields({ mutants: 'number', invalidMutants: 'number', callSites: 'number' }),
+    skipped: list(ITEM),
+    inconclusive: list(ITEM),
+    conflicts: list(fields({ testFile: 'string', patched: list('string') })),
+  }),
+});
+
+function violations(value: unknown, shape: Shape, at = '$'): string[] {
+  if (typeof shape === 'string') return typeof value === shape ? [] : [`${at}: expected ${shape}, got ${JSON.stringify(value)}`];
+  if ('nullable' in shape) return value === null ? [] : violations(value, shape.nullable, at);
+  if ('oneOf' in shape) return shape.oneOf.includes(value as string) ? [] : [`${at}: ${JSON.stringify(value)} is not one of ${shape.oneOf.join(', ')}`];
+  if ('list' in shape) {
+    if (!Array.isArray(value)) return [`${at}: expected a list`];
+    return value.flatMap((entry, index) => violations(entry, shape.list, `${at}[${index}]`));
+  }
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return [`${at}: expected an object`];
+  const actual = Object.keys(value).sort();
+  const expected = Object.keys(shape.fields).sort();
+  const keyProblems = actual.join() === expected.join() ? [] : [`${at}: keys ${actual.join(', ')} instead of ${expected.join(', ')}`];
+  return [
+    ...keyProblems,
+    ...expected.flatMap((key) => {
+      const field = shape.fields[key];
+      return field === undefined ? [] : violations((value as Record<string, unknown>)[key], field, `${at}.${key}`);
+    }),
+  ];
+}
+
+function parsed(result: RunResult): unknown {
+  return JSON.parse(renderJson(result)) as unknown;
+}
+
+const full = runResult({
+  status: 'partial',
+  scope: {
+    mode: 'diff',
+    changedSourceFiles: ['src/a.ts'],
+    changedTestFiles: ['test/a.test.ts'],
+    ignoredFiles: [{ file: 'README.md', reason: 'not-typescript' }],
+    notes: [{ file: 'src/a.ts', line: 4, message: 'deleted top-level code, nothing to mutate' }],
+    boundaryFiles: [],
+  },
+  findings: [faultFinding(), mutationFinding({ kind: 'no-coverage', severity: severityOf('no-coverage', 10) })],
+  skipped: [{ source: 'mutation', file: 'src/a.ts', line: null, reason: 'mutants never planned: the budget ran out first' }],
+  inconclusive: [{ source: 'fault', file: 'src/a.ts', line: 9, reason: 'the test did not reach the call site under the fault' }],
+  conflicts: [{ testFile: 'test/n.test.ts', patched: ['fetch'] }],
+});
+
+describe('JSON report schema', () => {
+  it('is version 1', () => {
+    expect(SCHEMA_VERSION).toBe(1);
+    expect(toJsonReport(full).schemaVersion).toBe(1);
+  });
+
+  it('matches the version 1 shape exactly for a run with every kind of entry', () => {
+    expect(violations(parsed(full), SCHEMA_V1)).toEqual([]);
+  });
+
+  it('matches the version 1 shape for a tool error, with git and scope null', () => {
+    const error = runResult({ status: 'error', error: 'base ref missing', git: null, scope: null, phases: [], findings: [] });
+    expect(violations(parsed(error), SCHEMA_V1)).toEqual([]);
+    expect(parsed(error)).toMatchObject({ git: null, scope: null, error: 'base ref missing', exitCode: 2 });
+  });
+
+  it('fails the shape check when a field goes missing or changes type', () => {
+    const report = parsed(full) as Record<string, unknown>;
+    expect(violations({ ...report, seed: '42' }, SCHEMA_V1)).toEqual(['$.seed: expected number, got "42"']);
+    const withoutLevel: Record<string, unknown> = { ...report };
+    delete withoutLevel['level'];
+    expect(violations(withoutLevel, SCHEMA_V1)[0]).toContain('$: keys');
+  });
+
+  it('carries the exit code of the run, with and without --strict', () => {
+    for (const status of ['completed', 'partial', 'inconclusive', 'nothing-in-scope', 'error'] as const) {
+      const result = runResult({ status, findings: status === 'nothing-in-scope' ? [] : full.findings });
+      expect(toJsonReport(result).exitCode).toBe(exitCodeOf(result));
+      expect(toJsonReport(result, { strict: true }).exitCode).toBe(exitCodeOf(result, { strict: true }));
+    }
+    expect(toJsonReport(runResult({ findings: [] })).exitCode).toBe(0);
+    expect(toJsonReport(runResult()).exitCode).toBe(1);
+    expect(toJsonReport(full)).toMatchObject({ exitCode: 1, strict: false });
+    expect(toJsonReport(full, { strict: true })).toMatchObject({ exitCode: 2, strict: true });
+  });
+
+  it('lists what was checked and every gap in the coverage section', () => {
+    expect(toJsonReport(full).coverage).toEqual({
+      checked: { mutants: 12, invalidMutants: 0, callSites: 3 },
+      skipped: [{ source: 'mutation', file: 'src/a.ts', line: null, reason: 'mutants never planned: the budget ran out first' }],
+      inconclusive: [{ source: 'fault', file: 'src/a.ts', line: 9, reason: 'the test did not reach the call site under the fault' }],
+      conflicts: [{ testFile: 'test/n.test.ts', patched: ['fetch'] }],
+    });
+  });
+
+  it('keeps every finding, in ranked order, with its detail', () => {
+    const report = toJsonReport(full);
+    expect(report.findings.map((finding) => [finding.kind, finding.severity.score])).toEqual([
+      ['hang-no-timeout', 70],
+      ['no-coverage', 55],
+    ]);
+    expect(report.findings[0]?.fault).toEqual({ verdict: 'hang', path: 'http', tests: ['test/ledger.test.ts > posts a ledger entry'] });
+    expect(report.findings[1]?.mutation).toMatchObject({ replacement: 'orderTotal > 120', coveredBy: ['test/discount.test.ts#applies'] });
+  });
+
+  it('describes the preset the run used', () => {
+    expect(toJsonReport(runResult({ level: 'shake' })).preset).toEqual({ name: 'Shake', budgetMs: 600_000, mutationShare: 0.65 });
+  });
+
+  it('is pretty-printed JSON ending in a newline', () => {
+    const text = renderJson(full);
+    expect(text.endsWith('}\n')).toBe(true);
+    expect(text.startsWith('{\n  "schemaVersion": 1,')).toBe(true);
+  });
+});
