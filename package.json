@@ -15,7 +15,8 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p fixtures/sample-app",
     "lint": "eslint .",
     "test": "vitest run",
-    "test:unit": "vitest run --exclude \"**/*.stryker.test.ts\"",
+    "test:unit": "vitest run --project unit",
+    "test:e2e": "vitest run --project e2e",
     "test:compat": "npm run compat:install && vitest run --config vitest.compat.config.ts",
     "compat:install": "npm install --prefix test/compat/vitest-4"
   },
