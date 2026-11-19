@@ -24,7 +24,7 @@ import {
   type BoundaryOptions,
 } from '../test-only-scoper/index.js';
 import { mutationBudgetMs } from './budget.js';
-import { faultItems, mutationItems, type PhaseItems } from './findings.js';
+import { faultItems, mutationItems, NOTHING_CHECKED, type PhaseItems } from './findings.js';
 import {
   ChimpdError,
   findVitestConfig,
@@ -34,6 +34,7 @@ import {
 } from './target.js';
 import {
   LEVELS,
+  type Checked,
   type Finding,
   type GitInfo,
   type Item,
@@ -42,6 +43,7 @@ import {
   type PhaseStatus,
   type RunResult,
   type RunScope,
+  type RunStatus,
 } from './types.js';
 
 export { mutationBudgetMs } from './budget.js';
@@ -112,6 +114,16 @@ function mutationPhaseStatus(result: MutationResult): { status: PhaseStatus; rea
 
 function scopedFiles(ranges: readonly ScopeRange[]): string[] {
   return [...new Set(ranges.map((range) => range.file))].sort();
+}
+
+/** A phase that produced no per-item results still leaves every file it was given listed as not checked. */
+function filesNotChecked(source: Item['source'], ranges: readonly ScopeRange[], reason: string): PhaseItems {
+  return {
+    checked: NOTHING_CHECKED,
+    findings: [],
+    skipped: scopedFiles(ranges).map((file) => ({ source, file, line: null, reason })),
+    inconclusive: [],
+  };
 }
 
 function compareText(a: string, b: string): number {
@@ -209,6 +221,7 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
     git: gitInfo,
     scope: runScope,
     phases: [],
+    checked: NOTHING_CHECKED,
     findings: [],
     skipped: [],
     inconclusive: [],
@@ -256,7 +269,7 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
   }
 
   const phases: PhaseReport[] = [];
-  const collected: PhaseItems[] = [{ findings: [], skipped: plan.scopeItems, inconclusive: [] }];
+  const collected: PhaseItems[] = [{ checked: NOTHING_CHECKED, findings: [], skipped: plan.scopeItems, inconclusive: [] }];
   const conflicts: FaultRunResult['conflicts'][number][] = [];
 
   const mutationMs = mutationBudgetMs({
@@ -303,6 +316,7 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
         budgetMs: mutationMs,
         spentMs: Math.round(now() - startedAt),
       });
+      collected.push(filesNotChecked('mutation', plan.mutationRanges, `not mutated: the mutation phase failed: ${messageOf(error)}`));
     }
   }
 
@@ -323,16 +337,7 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
         budgetMs: 0,
         spentMs: 0,
       });
-      collected.push({
-        findings: [],
-        skipped: scopedFiles(plan.faultRanges).map((file) => ({
-          source: 'fault',
-          file,
-          line: null,
-          reason: 'not faulted: no budget was left for the fault phase',
-        })),
-        inconclusive: [],
-      });
+      collected.push(filesNotChecked('fault', plan.faultRanges, 'not faulted: no budget was left for the fault phase'));
     } else {
       try {
         const faults = await deps.runFaults({
@@ -353,6 +358,9 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
         });
         conflicts.push(...faults.conflicts);
         collected.push(faultItems(faults, preset));
+        if (faults.status !== 'completed' && faults.results.length === 0 && faults.skipped.length === 0) {
+          collected.push(filesNotChecked('fault', plan.faultRanges, `not faulted: ${faults.statusReason ?? faults.status}`));
+        }
       } catch (error) {
         phases.push({
           name: 'faults',
@@ -361,6 +369,7 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
           budgetMs: faultMs,
           spentMs: Math.round(now() - startedAt),
         });
+        collected.push(filesNotChecked('fault', plan.faultRanges, `not faulted: the fault phase failed: ${messageOf(error)}`));
       }
     }
   }
@@ -368,16 +377,29 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
   const findings = collected.flatMap((items) => items.findings).sort(bySeverity);
   const skipped = collected.flatMap((items) => items.skipped).sort(byLocation);
   const inconclusive = collected.flatMap((items) => items.inconclusive).sort(byLocation);
-  // Calls made under a conflicting test file are never faulted, so a conflict is missing evidence too.
-  const incomplete =
+  const checked = collected.reduce<Checked>(
+    (total, items) => ({
+      mutants: total.mutants + items.checked.mutants,
+      invalidMutants: total.invalidMutants + items.checked.invalidMutants,
+      callSites: total.callSites + items.checked.callSites,
+    }),
+    NOTHING_CHECKED,
+  );
+  // Calls made under a conflicting test file are never faulted, so a conflict is a gap in coverage too.
+  const gaps =
     phases.some((phase) => phase.status !== 'completed' && phase.status !== 'not-run') ||
     skipped.length > 0 ||
     inconclusive.length > 0 ||
     conflicts.length > 0;
+  const nothingChecked = checked.mutants + checked.callSites === 0 && findings.length === 0;
+  let status: RunStatus = 'completed';
+  if (phases.some((phase) => phase.status === 'error') || (gaps && nothingChecked)) status = 'inconclusive';
+  else if (gaps) status = 'partial';
   return result({
-    status: incomplete ? 'incomplete' : 'completed',
+    status,
     error: null,
     phases,
+    checked,
     findings,
     skipped,
     inconclusive,
@@ -389,8 +411,13 @@ export const EXIT_CLEAN = 0;
 export const EXIT_FINDINGS = 1;
 export const EXIT_INCONCLUSIVE = 2;
 
-/** An incomplete run exits 2 even with findings, so a partial result is never read as the whole story. */
-export function exitCodeOf(result: RunResult): number {
-  if (result.status === 'error' || result.status === 'incomplete') return EXIT_INCONCLUSIVE;
+export interface ExitOptions {
+  /** A partial run exits 2 as well, so that any gap in coverage fails the check. */
+  readonly strict?: boolean;
+}
+
+export function exitCodeOf(result: RunResult, options: ExitOptions = {}): number {
+  if (result.status === 'error' || result.status === 'inconclusive') return EXIT_INCONCLUSIVE;
+  if (result.status === 'partial' && options.strict === true) return EXIT_INCONCLUSIVE;
   return result.findings.length > 0 ? EXIT_FINDINGS : EXIT_CLEAN;
 }

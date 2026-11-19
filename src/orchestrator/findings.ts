@@ -2,9 +2,15 @@ import type { MutantRecord, Preset } from '../core/index.js';
 import type { CallSite, FaultRunResult, SkipReason } from '../fault-run/index.js';
 import { mutationFindingKind, priorOf, severityOf } from '../severity/index.js';
 import type { MutationResult } from '../stryker-adapter/index.js';
-import type { Finding, Item } from './types.js';
+import type { Checked, Finding, Item } from './types.js';
+
+export const NOTHING_CHECKED: Checked = { mutants: 0, invalidMutants: 0, callSites: 0 };
+
+const VERDICT_STATUSES = new Set(['Killed', 'Survived', 'NoCoverage', 'Timeout']);
+const INVALID_STATUSES = new Set(['CompileError', 'RuntimeError']);
 
 export interface PhaseItems {
+  readonly checked: Checked;
   readonly findings: readonly Finding[];
   readonly skipped: readonly Item[];
   readonly inconclusive: readonly Item[];
@@ -60,7 +66,12 @@ export function mutationItems(
   for (const file of result.notTested.unplannedFiles) {
     skipped.push({ source: 'mutation', file, line: null, reason: 'mutants never planned: the budget ran out first' });
   }
-  return { findings, skipped, inconclusive: [] };
+  const checked: Checked = {
+    ...NOTHING_CHECKED,
+    mutants: considered.filter((mutant) => VERDICT_STATUSES.has(mutant.status)).length,
+    invalidMutants: considered.filter((mutant) => INVALID_STATUSES.has(mutant.status)).length,
+  };
+  return { checked, findings, skipped, inconclusive: [] };
 }
 
 function skipReason(reason: SkipReason, preset: Preset): string {
@@ -76,7 +87,9 @@ function siteItem(site: CallSite, reason: string): Item {
 export function faultItems(result: FaultRunResult, preset: Preset): PhaseItems {
   const findings: Finding[] = [];
   const inconclusive: Item[] = [];
+  let callSites = 0;
   for (const entry of result.results) {
+    if (entry.verdict !== 'inconclusive') callSites += 1;
     const { site } = entry;
     if (entry.findingKind !== null) {
       findings.push({
@@ -100,5 +113,5 @@ export function faultItems(result: FaultRunResult, preset: Preset): PhaseItems {
     }
   }
   const skipped = result.skipped.map(({ site, reason }) => siteItem(site, skipReason(reason, preset)));
-  return { findings, skipped, inconclusive };
+  return { checked: { ...NOTHING_CHECKED, callSites }, findings, skipped, inconclusive };
 }

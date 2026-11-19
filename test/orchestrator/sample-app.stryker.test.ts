@@ -34,7 +34,7 @@ it(
 );
 
 it(
-  'reports the hanging and detached calls of a client change, and stays incomplete because of a conflict',
+  'reports the hanging and detached calls of a client change, and the conflict as a coverage gap',
   async () => {
     app = createSampleApp();
     history.clientChanges(app);
@@ -48,8 +48,9 @@ it(
       ['fire-and-forget', 'src/telemetry.ts', 'trackEvent'],
     ]);
     expect(result.conflicts).toEqual([{ testFile: 'test/notifications.test.ts', patched: ['fetch'] }]);
-    expect(result.status).toBe('incomplete');
-    expect(exitCodeOf(result)).toBe(2);
+    expect(result.status).toBe('partial');
+    expect(exitCodeOf(result)).toBe(1);
+    expect(exitCodeOf(result, { strict: true })).toBe(2);
     const scores = result.findings.map((finding) => finding.severity.score);
     expect(scores).toEqual([...scores].sort((a, b) => b - a));
     expect(app.git('status', '--porcelain')).toBe('');

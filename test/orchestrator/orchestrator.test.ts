@@ -209,14 +209,21 @@ describe('budget split', () => {
   });
 });
 
+const killed = mutant({ status: 'Killed', killedBy: ['test/a.test.ts#a'], start: { line: 1, column: 1 } });
+
+/** The exit code without and with --strict. */
+function exits(result: RunResult): [number, number] {
+  return [exitCodeOf(result), exitCodeOf(result, { strict: true })];
+}
+
 describe('budget exhaustion', () => {
-  it('marks the mutation phase and the run incomplete when mutants were left untested', async () => {
+  it('reports a mutation phase cut short as partial, lists what it left untested, and exits by findings', async () => {
     const repo = changedRepo();
     const run = harness(repo, {
       runMutation: () =>
         Promise.resolve(
           mutationResult({
-            mutants: [mutant({ status: 'NotTested', statusReason: 'not tested: budget' })],
+            mutants: [killed, mutant({ status: 'NotTested', statusReason: 'not tested: budget' })],
             batches: [batch({ outcome: 'killed-budget' }), batch({ index: 1, files: ['src/b.ts'], outcome: 'not-launched', planned: null })],
             notTested: { reason: 'budget', mutants: 1, unplannedFiles: ['src/b.ts'] },
           }),
@@ -231,26 +238,28 @@ describe('budget exhaustion', () => {
       { source: 'mutation', file: 'src/a.ts', line: 2, reason: 'not tested: budget' },
       { source: 'mutation', file: 'src/b.ts', line: null, reason: 'mutants never planned: the budget ran out first' },
     ]);
-    expect(result.status).toBe('incomplete');
-    expect(exitCodeOf(result)).toBe(2);
+    expect(result.checked).toEqual({ mutants: 1, invalidMutants: 0, callSites: 0 });
+    expect(result.status).toBe('partial');
+    expect(exits(result)).toEqual([0, 2]);
   });
 
-  it('marks a batch stopped at twice its share as budget-exhausted', async () => {
+  it('reports a batch stopped at twice its share as budget-exhausted and the run as partial', async () => {
     const repo = changedRepo();
     const run = harness(repo, {
-      runMutation: () => Promise.resolve(mutationResult({ batches: [batch({ outcome: 'killed-over-share' })] })),
+      runMutation: () => Promise.resolve(mutationResult({ mutants: [killed], batches: [batch({ outcome: 'killed-over-share' })] })),
     });
     const result = await runChimpd(run.options());
     expect(phase(result, 'mutation')?.status).toBe('budget-exhausted');
-    expect(exitCodeOf(result)).toBe(2);
+    expect(result.status).toBe('partial');
+    expect(exits(result)).toEqual([0, 2]);
   });
 
-  it('skips the fault phase, with a reason per file, when mutation spent the whole budget', async () => {
+  it('lists every file the fault phase never got to when mutation spent the whole budget', async () => {
     const repo = changedRepo();
     const run = harness(repo, {
       runMutation: () => {
         run.advance(PRESETS[1].budgetMs + 500);
-        return Promise.resolve(mutationResult());
+        return Promise.resolve(mutationResult({ mutants: [killed, mutant()] }));
       },
     });
     const result = await runChimpd(run.options());
@@ -262,10 +271,11 @@ describe('budget exhaustion', () => {
     expect(result.skipped).toEqual([
       { source: 'fault', file: 'src/a.ts', line: null, reason: 'not faulted: no budget was left for the fault phase' },
     ]);
-    expect(exitCodeOf(result)).toBe(2);
+    expect(result.status).toBe('partial');
+    expect(exits(result)).toEqual([1, 2]);
   });
 
-  it('carries a fault phase that ran out of budget into the report and the exit code', async () => {
+  it('keeps the sites a budget-exhausted fault phase skipped, and exits by findings', async () => {
     const repo = changedRepo();
     const run = harness(repo, {
       runFaults: () =>
@@ -273,6 +283,7 @@ describe('budget exhaustion', () => {
           faultRun({
             status: 'budget-exhausted',
             statusReason: 'the budget ran out before every call site was faulted',
+            results: [siteResult({ site: site({ key: 'src/a.ts:9:1', line: 9 }) })],
             skipped: [{ site: site(), reason: 'budget' }],
           }),
         ),
@@ -285,56 +296,107 @@ describe('budget exhaustion', () => {
     expect(result.skipped).toEqual([
       { source: 'fault', file: 'src/a.ts', line: 5, reason: 'not faulted: the budget ran out first' },
     ]);
-    expect(exitCodeOf(result)).toBe(2);
+    expect(result.checked.callSites).toBe(1);
+    expect(exits(result)).toEqual([0, 2]);
+  });
+
+  it('is inconclusive as a whole, exit 2, when the budget ran out before anything was checked', async () => {
+    const repo = changedRepo();
+    const run = harness(repo, {
+      runMutation: () =>
+        Promise.resolve(
+          mutationResult({
+            batches: [batch({ outcome: 'killed-budget', planned: null, tested: 0 })],
+            notTested: { reason: 'budget', mutants: 0, unplannedFiles: ['src/a.ts'] },
+          }),
+        ),
+      runFaults: () => Promise.resolve(faultRun({ status: 'budget-exhausted', statusReason: 'discovery ran out of time' })),
+    });
+    const result = await runChimpd(run.options());
+    expect(result.checked).toEqual({ mutants: 0, invalidMutants: 0, callSites: 0 });
+    expect(result.skipped).toEqual([
+      { source: 'fault', file: 'src/a.ts', line: null, reason: 'not faulted: discovery ran out of time' },
+      { source: 'mutation', file: 'src/a.ts', line: null, reason: 'mutants never planned: the budget ran out first' },
+    ]);
+    expect(result.status).toBe('inconclusive');
+    expect(exits(result)).toEqual([2, 2]);
   });
 });
 
 describe('phase failures', () => {
-  it('records a mutation phase that throws and still runs the fault phase', async () => {
+  it('records a mutation phase that throws, lists its files as not checked, and exits 2', async () => {
     const repo = changedRepo();
-    const run = harness(repo, { runMutation: () => Promise.reject(new Error('stryker exploded')) });
+    const run = harness(repo, {
+      runMutation: () => Promise.reject(new Error('stryker exploded')),
+      runFaults: () => Promise.resolve(faultRun({ results: [siteResult()] })),
+    });
     const result = await runChimpd(run.options());
     expect(phase(result, 'mutation')).toMatchObject({ status: 'error', statusReason: 'stryker exploded' });
     expect(phase(result, 'faults')?.status).toBe('completed');
-    expect(result.status).toBe('incomplete');
-    expect(exitCodeOf(result)).toBe(2);
+    expect(result.skipped).toEqual([
+      { source: 'mutation', file: 'src/a.ts', line: null, reason: 'not mutated: the mutation phase failed: stryker exploded' },
+    ]);
+    expect(result.status).toBe('inconclusive');
+    expect(exits(result)).toEqual([2, 2]);
   });
 
   it('records a failed Stryker batch as a phase error', async () => {
     const repo = changedRepo();
     const run = harness(repo, {
-      runMutation: () => Promise.resolve(mutationResult({ batches: [batch({ outcome: 'failed', error: 'dry run failed' })] })),
+      runMutation: () =>
+        Promise.resolve(mutationResult({ mutants: [killed], batches: [batch({ outcome: 'failed', error: 'dry run failed' })] })),
     });
     const result = await runChimpd(run.options());
     expect(phase(result, 'mutation')).toMatchObject({ status: 'error', statusReason: 'mutation batch 0 failed: dry run failed' });
-    expect(exitCodeOf(result)).toBe(2);
+    expect(exits(result)).toEqual([2, 2]);
   });
 
-  it('records a fault phase that throws', async () => {
+  it('records a fault phase that throws and lists its files as not checked', async () => {
     const repo = changedRepo();
-    const run = harness(repo, { runFaults: () => Promise.reject(new Error('vitest would not start')) });
+    const run = harness(repo, {
+      runMutation: () => Promise.resolve(mutationResult({ mutants: [killed, mutant()] })),
+      runFaults: () => Promise.reject(new Error('vitest would not start')),
+    });
     const result = await runChimpd(run.options());
     expect(phase(result, 'faults')).toMatchObject({ status: 'error', statusReason: 'vitest would not start' });
-    expect(exitCodeOf(result)).toBe(2);
+    expect(result.skipped).toEqual([
+      { source: 'fault', file: 'src/a.ts', line: null, reason: 'not faulted: the fault phase failed: vitest would not start' },
+    ]);
+    expect(result.findings).toHaveLength(1);
+    expect(exits(result)).toEqual([2, 2]);
   });
 
-  it('records an inconclusive fault phase', async () => {
+  it('reports an inconclusive fault phase as partial when mutation checked something, listing its files', async () => {
+    const repo = changedRepo();
+    const run = harness(repo, {
+      runMutation: () => Promise.resolve(mutationResult({ mutants: [killed] })),
+      runFaults: () => Promise.resolve(faultRun({ status: 'inconclusive', statusReason: 'fetch was patched before the tests loaded' })),
+    });
+    const result = await runChimpd(run.options());
+    expect(phase(result, 'faults')).toMatchObject({ status: 'inconclusive', statusReason: 'fetch was patched before the tests loaded' });
+    expect(result.skipped).toEqual([
+      { source: 'fault', file: 'src/a.ts', line: null, reason: 'not faulted: fetch was patched before the tests loaded' },
+    ]);
+    expect(result.status).toBe('partial');
+    expect(exits(result)).toEqual([0, 2]);
+  });
+
+  it('is inconclusive as a whole when nothing else was checked besides an inconclusive phase', async () => {
     const repo = changedRepo();
     const run = harness(repo, {
       runFaults: () => Promise.resolve(faultRun({ status: 'inconclusive', statusReason: 'fetch was patched before the tests loaded' })),
     });
     const result = await runChimpd(run.options());
-    expect(phase(result, 'faults')).toMatchObject({ status: 'inconclusive', statusReason: 'fetch was patched before the tests loaded' });
-    expect(exitCodeOf(result)).toBe(2);
+    expect(result.status).toBe('inconclusive');
+    expect(exits(result)).toEqual([2, 2]);
   });
 });
 
 describe('findings', () => {
-  it('ranks findings from both phases on one scale and exits 1 when the run is otherwise complete', async () => {
+  it('ranks findings from both phases on one scale and exits 1 when everything was checked', async () => {
     const repo = changedRepo();
     const run = harness(repo, {
-      runMutation: () =>
-        Promise.resolve(mutationResult({ mutants: [mutant(), mutant({ status: 'Killed', killedBy: ['test/a.test.ts#a'] })] })),
+      runMutation: () => Promise.resolve(mutationResult({ mutants: [mutant(), killed] })),
       runFaults: () =>
         Promise.resolve(
           faultRun({
@@ -351,28 +413,38 @@ describe('findings', () => {
       ['mutation', 'survived', 2, 55],
     ]);
     expect(result.findings[1]?.message).toBe('EqualityOperator mutant survived every test that covers it: total > 100');
+    expect(result.checked).toEqual({ mutants: 2, invalidMutants: 0, callSites: 2 });
     expect(result.status).toBe('completed');
-    expect(exitCodeOf(result)).toBe(1);
+    expect(exits(result)).toEqual([1, 1]);
   });
 
-  it('exits 0 only when everything in scope was evaluated and nothing was found', async () => {
+  it('exits 0 when everything in scope was checked and nothing was found', async () => {
     const repo = changedRepo();
     const run = harness(repo, {
-      runMutation: () => Promise.resolve(mutationResult({ mutants: [mutant({ status: 'Killed' })] })),
+      runMutation: () => Promise.resolve(mutationResult({ mutants: [killed, mutant({ status: 'CompileError' })] })),
       runFaults: () => Promise.resolve(faultRun({ results: [siteResult()] })),
     });
     const result = await runChimpd(run.options());
     expect(result).toMatchObject({ status: 'completed', findings: [], skipped: [], inconclusive: [] });
-    expect(exitCodeOf(result)).toBe(0);
+    expect(result.checked).toEqual({ mutants: 1, invalidMutants: 1, callSites: 1 });
+    expect(exits(result)).toEqual([0, 0]);
   });
 
-  it('makes an inconclusive site or a skipped site keep the run from being clean', async () => {
+  it('lists inconclusive and over-cap sites, reports the run as partial, and exits by findings', async () => {
     const repo = changedRepo();
     const run = harness(repo, {
       runFaults: () =>
         Promise.resolve(
           faultRun({
-            results: [siteResult({ verdict: 'inconclusive', reason: 'the test did not reach the call site under the fault' })],
+            results: [
+              siteResult({ verdict: 'inconclusive', reason: 'the test did not reach the call site under the fault' }),
+              siteResult({
+                site: site({ key: 'src/a.ts:12:1', line: 12 }),
+                verdict: 'hang',
+                findingKind: 'hang-no-timeout',
+                reason: 'no timeout',
+              }),
+            ],
             skipped: [{ site: site({ key: 'src/a.ts:8:1', line: 8 }), reason: 'over-cap' }],
           }),
         ),
@@ -384,30 +456,20 @@ describe('findings', () => {
     expect(result.skipped).toEqual([
       { source: 'fault', file: 'src/a.ts', line: 8, reason: 'not faulted: over the preset cap of 3 call sites' },
     ]);
-    expect(exitCodeOf(result)).toBe(2);
+    expect(result.status).toBe('partial');
+    expect(exits(result)).toEqual([1, 2]);
   });
 
-  it('treats a test file that replaces HTTP entry points as missing evidence', async () => {
+  it('keeps a test file that replaces HTTP entry points as a coverage gap that exits by findings', async () => {
     const repo = changedRepo();
     const conflict = { testFile: 'test/a.test.ts', patched: ['fetch'] };
-    const run = harness(repo, { runFaults: () => Promise.resolve(faultRun({ conflicts: [conflict] })) });
+    const run = harness(repo, { runFaults: () => Promise.resolve(faultRun({ results: [siteResult()], conflicts: [conflict] })) });
     const result = await runChimpd(run.options());
-    expect(result).toMatchObject({ status: 'incomplete', conflicts: [conflict] });
-    expect(exitCodeOf(result)).toBe(2);
+    expect(result).toMatchObject({ status: 'partial', conflicts: [conflict] });
+    expect(exits(result)).toEqual([0, 2]);
   });
 
-  it('keeps findings visible when the run is incomplete but still exits 2', async () => {
-    const repo = changedRepo();
-    const run = harness(repo, {
-      runMutation: () => Promise.resolve(mutationResult({ mutants: [mutant()] })),
-      runFaults: () => Promise.reject(new Error('boom')),
-    });
-    const result = await runChimpd(run.options());
-    expect(result.findings).toHaveLength(1);
-    expect(exitCodeOf(result)).toBe(2);
-  });
-
-  it('reports only the survivors a changed test covers in test-only mode', async () => {
+  it('reports only the survivors a changed test covers in test-only mode, and the files over the cap', async () => {
     const repo = changedRepo({ testOnly: true });
     const covered = mutant({ scopeKind: 'test-boundary', coveredBy: ['test/a.test.ts#a'] });
     const elsewhere = mutant({ scopeKind: 'test-boundary', coveredBy: ['test/other.test.ts#x'], start: { line: 3, column: 1 } });
@@ -434,7 +496,8 @@ describe('findings', () => {
         reason: '2 more source files reachable from the changed tests are over the preset cap of 10',
       },
     ]);
-    expect(exitCodeOf(result)).toBe(2);
+    expect(result.status).toBe('partial');
+    expect(exits(result)).toEqual([1, 2]);
   });
 
   it('returns the seed it was given, and picks one when it was not', async () => {

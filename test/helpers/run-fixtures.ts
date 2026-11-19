@@ -149,6 +149,7 @@ export function runResult(overrides: Partial<RunResult> = {}): RunResult {
       { name: 'mutation', status: 'completed', statusReason: null, budgetMs: 84_000, spentMs: 30_000 },
       { name: 'faults', status: 'completed', statusReason: null, budgetMs: 90_000, spentMs: 15_000 },
     ],
+    checked: { mutants: 12, invalidMutants: 0, callSites: 3 },
     findings: [faultFinding(), mutationFinding()],
     skipped: [],
     inconclusive: [],

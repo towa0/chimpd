@@ -79,7 +79,20 @@ export interface GitInfo {
   readonly dirty: boolean;
 }
 
-export type RunStatus = 'completed' | 'incomplete' | 'nothing-in-scope' | 'error';
+/**
+ * completed: everything in scope was checked. partial: something in scope was not checked, but the
+ * run still checked something. inconclusive: a phase failed, or nothing in scope could be checked.
+ */
+export type RunStatus = 'completed' | 'partial' | 'inconclusive' | 'nothing-in-scope' | 'error';
+
+export interface Checked {
+  /** Mutants that got a verdict: killed, survived, uncovered or timed out. */
+  readonly mutants: number;
+  /** Mutants Stryker could not run, because they failed to compile or crashed the runner. */
+  readonly invalidMutants: number;
+  /** Call sites that were faulted and got a verdict. */
+  readonly callSites: number;
+}
 
 export interface RunResult {
   readonly status: RunStatus;
@@ -92,6 +105,7 @@ export interface RunResult {
   readonly git: GitInfo | null;
   readonly scope: RunScope | null;
   readonly phases: readonly PhaseReport[];
+  readonly checked: Checked;
   /** Most severe first. */
   readonly findings: readonly Finding[];
   readonly skipped: readonly Item[];
