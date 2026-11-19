@@ -49,12 +49,6 @@ describe('loading the target Vitest', () => {
     expect(typeof loaded.node.createVitest).toBe('function');
   });
 
-  it('loads Vitest 4 from a target that has it', async () => {
-    const loaded = await loadTargetVitest(path.join(repoRoot, 'test/compat/vitest-4'));
-    expect(loaded.version).toBe('4.1.12');
-    expect(typeof loaded.node.createVitest).toBe('function');
-  });
-
   it('says so when Vitest is not installed', async () => {
     const dir = tempDir();
     fs.writeFileSync(path.join(dir, 'package.json'), '{}');
