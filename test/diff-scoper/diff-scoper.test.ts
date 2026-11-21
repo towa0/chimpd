@@ -501,6 +501,35 @@ describe('test and source file separation', () => {
     expect(result.changedTestFiles).toEqual([]);
   });
 
+  it('keeps tooling and config files out of scope, with a reason', async () => {
+    const repo = shapesRepo();
+    for (const file of [
+      'vitest.config.ts',
+      'vite.config.mts',
+      'eslint.config.ts',
+      'stryker.config.mts',
+      'stryker.conf.ts',
+      'packages/web/tailwind.config.ts',
+      'vitest.workspace.ts',
+    ]) {
+      repo.write(file, 'export default {};\n');
+    }
+    repo.write('src/config.ts', 'export const LIMIT = 3;\n');
+    repo.commit('Change tooling');
+    const result = await scope(repo);
+    expect(result.ignoredFiles.filter((entry) => entry.reason === 'config-file').map((entry) => entry.file)).toEqual([
+      'eslint.config.ts',
+      'packages/web/tailwind.config.ts',
+      'stryker.conf.ts',
+      'stryker.config.mts',
+      'vite.config.mts',
+      'vitest.config.ts',
+      'vitest.workspace.ts',
+    ]);
+    expect(result.changedSourceFiles).toEqual(['src/config.ts']);
+    expect(result.ranges.map((entry) => entry.file)).toEqual(['src/config.ts']);
+  });
+
   it('scopes the sample app boundary change to the changed line', async () => {
     const app = createSampleApp();
     repos.push(app);

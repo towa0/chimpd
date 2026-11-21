@@ -4,6 +4,7 @@ import path from 'node:path';
 import {
   countLines,
   decideIgnoreStatic,
+  firstErrorLine,
   git,
   mergeRangesByFile,
   PRESETS,
@@ -13,7 +14,7 @@ import {
   type Preset,
   type ScopeRange,
 } from '../core/index.js';
-import { DEFAULT_BASE, scopeDiff, type DiffScope, type DiffScopeOptions } from '../diff-scoper/index.js';
+import { DEFAULT_BASE, findOutgoingCalls, scopeDiff, type DiffScope, type DiffScopeOptions } from '../diff-scoper/index.js';
 import { runFaults, type FaultRunRequest, type FaultRunResult } from '../fault-run/index.js';
 import { runMutation, type MutationRequest, type MutationResult } from '../stryker-adapter/index.js';
 import {
@@ -24,7 +25,7 @@ import {
   type BoundaryOptions,
 } from '../test-only-scoper/index.js';
 import { mutationBudgetMs } from './budget.js';
-import { faultItems, mutationItems, NOTHING_CHECKED, type PhaseItems } from './findings.js';
+import { faultItems, mutationItems, NOTHING_CHECKED, SUITE_FAILS, type PhaseItems } from './findings.js';
 import {
   ChimpdError,
   findVitestConfig,
@@ -45,6 +46,7 @@ import {
   type RunScope,
   type RunStatus,
 } from './types.js';
+import { discoveryFinished, unreachedCalls } from './unreached.js';
 
 export { mutationBudgetMs } from './budget.js';
 export type { BudgetSplitInput } from './budget.js';
@@ -79,6 +81,14 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function reasonOf(error: unknown): string {
+  return firstErrorLine(messageOf(error)) ?? 'no error reported';
+}
+
+function detailOf(error: unknown): string {
+  return error instanceof Error ? (error.stack ?? error.message) : String(error);
+}
+
 async function checkTarget(cwd: string, base: string): Promise<void> {
   if (!fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) throw new ChimpdError(`${cwd} is not a directory`);
   try {
@@ -98,10 +108,16 @@ function staticLines(ranges: readonly ScopeRange[]): number {
   return [...merged.values()].reduce((total, intervals) => total + countLines(intervals), 0);
 }
 
-function mutationPhaseStatus(result: MutationResult): { status: PhaseStatus; reason: string | null } {
+function mutationPhaseStatus(result: MutationResult): { status: PhaseStatus; reason: string | null; detail?: string } {
+  const red = result.batches.find((batch) => batch.outcome === 'dry-run-failed');
+  if (red !== undefined) {
+    const detail = firstErrorLine(red.error);
+    return { status: 'inconclusive', reason: detail === null ? SUITE_FAILS : `${SUITE_FAILS}: ${detail}` };
+  }
   const failed = result.batches.find((batch) => batch.outcome === 'failed');
   if (failed !== undefined) {
-    return { status: 'error', reason: `mutation batch ${failed.index} failed: ${failed.error ?? 'no error reported'}` };
+    const reason = `mutation batch ${failed.index} failed: ${firstErrorLine(failed.error) ?? 'no error reported'}`;
+    return failed.error === null ? { status: 'error', reason } : { status: 'error', reason, detail: failed.error };
   }
   if (result.batches.some((batch) => batch.outcome === 'killed-over-share')) {
     return { status: 'budget-exhausted', reason: 'a mutation batch was stopped at twice its share of the budget' };
@@ -117,6 +133,8 @@ function mutationPhaseStatus(result: MutationResult): { status: PhaseStatus; rea
 function scopedFiles(ranges: readonly ScopeRange[]): string[] {
   return [...new Set(ranges.map((range) => range.file))].sort();
 }
+
+const EMPTY_ITEMS: PhaseItems = { checked: NOTHING_CHECKED, findings: [], invalid: [], skipped: [], inconclusive: [] };
 
 /** A phase that produced no per-item results still leaves every file it was given listed as not checked. */
 function filesNotChecked(source: Item['source'], ranges: readonly ScopeRange[], reason: string): PhaseItems {
@@ -220,6 +238,7 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
   let runScope: RunScope | null = null;
   const result = (partial: Pick<RunResult, 'status' | 'error'> & Partial<RunResult>): RunResult => ({
     level,
+    statusReason: null,
     budgetMs: preset.budgetMs,
     seed,
     git: gitInfo,
@@ -268,7 +287,8 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
     const found = findVitestConfig(targetRoot);
     if (found === null) throw new ChimpdError(missingConfigMessage(targetRoot));
     configFile = found;
-    if (faultsInScope) vitest = await deps.loadVitest(targetRoot);
+    // Loading the target's Vitest also checks its version, which the mutation phase depends on as well.
+    vitest = await deps.loadVitest(targetRoot);
   } catch (error) {
     return failed(error);
   }
@@ -277,12 +297,12 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
   const collected: PhaseItems[] = [{ checked: NOTHING_CHECKED, findings: [], invalid: [], skipped: plan.scopeItems, inconclusive: [] }];
   const conflicts: FaultRunResult['conflicts'][number][] = [];
 
-  const mutationMs = mutationBudgetMs({
+  const mutationMs = Math.round(mutationBudgetMs({
     remainingMs: budget.remainingMs(),
     mutationShare: preset.mutationShare,
     mutationInScope,
     faultsInScope,
-  });
+  }));
   if (!mutationInScope) {
     const reason =
       plan.scope.mode === 'test-only'
@@ -306,8 +326,15 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
         budgetMs: mutationMs,
         ...output,
       });
-      const { status, reason } = mutationPhaseStatus(mutation);
-      phases.push({ name: 'mutation', status, statusReason: reason, budgetMs: mutationMs, spentMs: Math.round(now() - startedAt) });
+      const { status, reason, detail } = mutationPhaseStatus(mutation);
+      phases.push({
+        name: 'mutation',
+        status,
+        statusReason: reason,
+        ...(detail === undefined ? {} : { detail }),
+        budgetMs: mutationMs,
+        spentMs: Math.round(now() - startedAt),
+      });
       if (plan.changedTestFiles === null) {
         collected.push(mutationItems(mutation, mutation.mutants, null));
       } else {
@@ -318,11 +345,12 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
       phases.push({
         name: 'mutation',
         status: 'error',
-        statusReason: messageOf(error),
+        statusReason: reasonOf(error),
+        detail: detailOf(error),
         budgetMs: mutationMs,
         spentMs: Math.round(now() - startedAt),
       });
-      collected.push(filesNotChecked('mutation', plan.mutationRanges, `not mutated: the mutation phase failed: ${messageOf(error)}`));
+      collected.push(filesNotChecked('mutation', plan.mutationRanges, `not mutated: the mutation phase failed: ${reasonOf(error)}`));
     }
   }
 
@@ -333,7 +361,7 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
         : 'no TypeScript source in scope to fault';
     phases.push({ name: 'faults', status: 'not-run', statusReason: reason, budgetMs: 0, spentMs: 0 });
   } else {
-    const faultMs = budget.remainingMs();
+    const faultMs = Math.round(budget.remainingMs());
     const startedAt = now();
     if (faultMs <= 0) {
       phases.push({
@@ -365,6 +393,10 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
         });
         conflicts.push(...faults.conflicts);
         collected.push(faultItems(faults, preset));
+        if (discoveryFinished(faults)) {
+          const calls = findOutgoingCalls(targetRoot, plan.faultRanges);
+          collected.push({ ...EMPTY_ITEMS, skipped: unreachedCalls(calls, faults, plan.faultRanges) });
+        }
         if (faults.status !== 'completed' && faults.results.length === 0 && faults.skipped.length === 0) {
           collected.push(filesNotChecked('fault', plan.faultRanges, `not faulted: ${faults.statusReason ?? faults.status}`));
         }
@@ -372,11 +404,12 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
         phases.push({
           name: 'faults',
           status: 'error',
-          statusReason: messageOf(error),
+          statusReason: reasonOf(error),
+          detail: detailOf(error),
           budgetMs: faultMs,
           spentMs: Math.round(now() - startedAt),
         });
-        collected.push(filesNotChecked('fault', plan.faultRanges, `not faulted: the fault phase failed: ${messageOf(error)}`));
+        collected.push(filesNotChecked('fault', plan.faultRanges, `not faulted: the fault phase failed: ${reasonOf(error)}`));
       }
     }
   }
@@ -393,18 +426,10 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
     }),
     NOTHING_CHECKED,
   );
-  // Calls made under a conflicting test file are never faulted, so a conflict is a gap in coverage too.
-  const gaps =
-    phases.some((phase) => phase.status !== 'completed' && phase.status !== 'not-run') ||
-    skipped.length > 0 ||
-    inconclusive.length > 0 ||
-    conflicts.length > 0;
-  const nothingChecked = checked.mutants + checked.callSites === 0 && findings.length === 0;
-  let status: RunStatus = 'completed';
-  if (phases.some((phase) => phase.status === 'error') || (gaps && nothingChecked)) status = 'inconclusive';
-  else if (gaps) status = 'partial';
+  const { status, statusReason } = runStatus({ phases, checked, findings, invalid, skipped, inconclusive, conflicts }, plan.scope.mode);
   return result({
     status,
+    statusReason,
     error: null,
     phases,
     checked,
@@ -414,6 +439,39 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
     inconclusive,
     conflicts,
   });
+}
+
+interface Outcome {
+  readonly phases: readonly PhaseReport[];
+  readonly checked: Checked;
+  readonly findings: readonly Finding[];
+  readonly invalid: readonly Item[];
+  readonly skipped: readonly Item[];
+  readonly inconclusive: readonly Item[];
+  readonly conflicts: readonly unknown[];
+}
+
+function runStatus(outcome: Outcome, mode: RunScope['mode']): { status: RunStatus; statusReason: string | null } {
+  const failedPhase = outcome.phases.find((phase) => phase.status === 'error');
+  if (failedPhase !== undefined) return { status: 'inconclusive', statusReason: `the ${failedPhase.name} phase failed` };
+  const unfinishedPhase = outcome.phases.some((phase) => phase.status !== 'completed' && phase.status !== 'not-run');
+  const listedGaps = outcome.skipped.length + outcome.inconclusive.length + outcome.conflicts.length;
+  // Calls made under a conflicting test file are never faulted, and an invalid mutant got no verdict, so both are gaps.
+  const gaps = unfinishedPhase || listedGaps > 0 || outcome.invalid.length > 0;
+  const nothingChecked = outcome.checked.mutants + outcome.checked.callSites === 0 && outcome.findings.length === 0;
+  if (gaps && nothingChecked) {
+    const onlyInvalid = !unfinishedPhase && listedGaps === 0;
+    return { status: 'inconclusive', statusReason: onlyInvalid ? 'no mutant in scope could run' : 'nothing in scope could be checked' };
+  }
+  if (gaps) return { status: 'partial', statusReason: null };
+  if (nothingChecked) {
+    const statusReason =
+      mode === 'test-only'
+        ? 'the source the changed tests reach produces no mutants at this level'
+        : 'the changed code produces no mutants at this level and makes no outgoing calls';
+    return { status: 'nothing-checkable', statusReason };
+  }
+  return { status: 'completed', statusReason: null };
 }
 
 export const EXIT_CLEAN = 0;
@@ -427,6 +485,6 @@ export interface ExitOptions {
 
 export function exitCodeOf(result: RunResult, options: ExitOptions = {}): number {
   if (result.status === 'error' || result.status === 'inconclusive') return EXIT_INCONCLUSIVE;
-  if (result.status === 'partial' && options.strict === true) return EXIT_INCONCLUSIVE;
+  if ((result.status === 'partial' || result.status === 'nothing-checkable') && options.strict === true) return EXIT_INCONCLUSIVE;
   return result.findings.length > 0 ? EXIT_FINDINGS : EXIT_CLEAN;
 }

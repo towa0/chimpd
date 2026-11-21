@@ -47,7 +47,8 @@ export interface MutationRequest {
   readonly onTargetOutput?: (text: string) => void;
 }
 
-export type BatchOutcome = 'completed' | 'failed' | 'killed-over-share' | 'killed-budget' | 'not-launched';
+/** dry-run-failed: the target's own tests failed or errored with no mutant active, so no mutant was judged. */
+export type BatchOutcome = 'completed' | 'failed' | 'dry-run-failed' | 'killed-over-share' | 'killed-budget' | 'not-launched';
 
 export interface BatchReport {
   readonly index: number;
@@ -93,6 +94,8 @@ const STATIC_REASON = 'static mutants are skipped because ignoreStatic is on';
 const OVER_SHARE_FACTOR = 2;
 const FINAL_STATUSES = new Set(['Killed', 'Survived', 'NoCoverage', 'CompileError', 'RuntimeError', 'Timeout', 'Ignored']);
 const TYPE_CHECK_FAILURE = 'Typescript error(s) found in dry run compilation';
+/** What Stryker throws when the initial test run, with no mutant active, has failing tests or errors. */
+const DRY_RUN_FAILURES = ['There were failed tests in the initial test run', 'Something went wrong in the initial test run'];
 const EMPTY_CONFIG_FILE = 'stryker.config.json';
 
 /** The names Stryker searches for in the working directory, in its order. */
@@ -130,6 +133,22 @@ function compareMutants(a: MutantRecord, b: MutantRecord): number {
     a.end.column - b.end.column ||
     text(a.mutatorName, b.mutatorName) ||
     text(a.replacement, b.replacement)
+  );
+}
+
+export const UNCOVERED_REASON = 'no test runs this mutant: Stryker reported no coverage for its batch';
+
+/**
+ * Stryker's Vitest runner reports no coverage at all when no test executes any mutant of the batch.
+ * Stryker then treats coverage analysis as off and runs every test against each mutant, which
+ * reports an unexecuted mutant as Survived. A kill under that missing coverage would instead mean
+ * coverage collection itself broke, so the survivors are only reclassified when nothing was killed.
+ */
+export function reclassifyUncovered(outcomes: readonly MutantOutcome[], coverageReported: boolean | null): MutantOutcome[] {
+  const executed = outcomes.some((outcome) => outcome.status === 'Killed' || outcome.status === 'Timeout');
+  if (coverageReported !== false || executed) return [...outcomes];
+  return outcomes.map((outcome) =>
+    outcome.status === 'Survived' ? { ...outcome, status: 'NoCoverage', statusReason: UNCOVERED_REASON } : outcome,
   );
 }
 
@@ -172,6 +191,7 @@ interface BatchRun {
   readonly tested: ReadonlyMap<string, WireMutant>;
   readonly tests: readonly WireTest[];
   readonly dryRunNetMs: number | null;
+  readonly coverageReported: boolean | null;
 }
 
 interface BatchContext {
@@ -188,6 +208,7 @@ async function runBatch(batch: Batch, context: BatchContext): Promise<BatchRun> 
   const tested = new Map<string, WireMutant>();
   let tests: readonly WireTest[] = [];
   let dryRunNetMs: number | null = null;
+  let coverageReported: boolean | null = null;
   let plannedCount: number | null = null;
 
   const entry = request.workerEntry ?? workerPath();
@@ -212,6 +233,7 @@ async function runBatch(batch: Batch, context: BatchContext): Promise<BatchRun> 
       if (message.type === 'dry-run') {
         tests = message.tests;
         dryRunNetMs = message.netMs;
+        coverageReported = message.coverageReported ?? null;
       } else if (message.type === 'plan') {
         plannedCount = message.mutants.length;
         for (const mutant of message.mutants) planned.set(mutant.id, mutant);
@@ -225,13 +247,21 @@ async function runBatch(batch: Batch, context: BatchContext): Promise<BatchRun> 
   // A killed run never reaches Stryker's own cleanup of its sandbox.
   removeTree(path.join(request.targetRoot, STRYKER_TEMP_DIR));
 
+  const dryRunFailed = run.outcome === 'failed' && DRY_RUN_FAILURES.some((text) => (run.error ?? '').includes(text));
   const outcome: BatchOutcome =
-    run.outcome === 'killed' ? (overShareMs <= remainingMs ? 'killed-over-share' : 'killed-budget') : run.outcome;
+    run.outcome === 'killed'
+      ? overShareMs <= remainingMs
+        ? 'killed-over-share'
+        : 'killed-budget'
+      : dryRunFailed
+        ? 'dry-run-failed'
+        : run.outcome;
   return {
     planned,
     tested,
     tests,
     dryRunNetMs,
+    coverageReported,
     report: {
       index: batch.index,
       files: batch.files.map((file) => file.file),
@@ -343,7 +373,7 @@ export async function runMutation(request: MutationRequest): Promise<MutationRes
     }
     if (run.report.planned === null && run.report.outcome !== 'completed') unplannedFiles.push(...files);
 
-    for (const outcome of resolveOutcomes(run.planned, run.tested)) {
+    for (const outcome of reclassifyUncovered(resolveOutcomes(run.planned, run.tested), run.coverageReported)) {
       if (outcome.status === 'NotTested') notTested += 1;
       record(outcome.mutant, outcome.status, outcome.statusReason);
     }

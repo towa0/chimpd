@@ -4,7 +4,7 @@ import path from 'node:path';
 import { Writable } from 'node:stream';
 import type { Vite } from 'vitest/node';
 import { ensureWorkDir, realClearTimeout, realSetTimeout, removeTree, toPosix } from '../core/index.js';
-import { prependSetupFile, type VitestInlineOptions, type VitestNodeModule } from '../fault-recon/index.js';
+import { prependSetupFile, targetViteLogger, type VitestInlineOptions, type VitestNodeModule } from '../fault-recon/index.js';
 import type { Fingerprints } from '../fault-recon/conflicts.js';
 import type { RuntimeConfig, RuntimeEvent, RuntimeMode } from '../fault-recon/protocol.js';
 
@@ -137,7 +137,7 @@ export async function runInstrumented(request: InstrumentedRequest): Promise<Ins
     const vitest = await request.vitestNode.createVitest(
       'test',
       { ...request.options, reporters: [{}], root: targetRoot, config: request.configFile, watch: false },
-      { plugins: [prependSetupFile(stubFile), ...(request.plugins ?? [])] },
+      { plugins: [prependSetupFile(stubFile), ...(request.plugins ?? [])], customLogger: targetViteLogger(request.onTargetOutput) },
       { stdout: outputSink(request.onTargetOutput), stderr: outputSink(request.onTargetOutput) },
     );
     let killed = false;

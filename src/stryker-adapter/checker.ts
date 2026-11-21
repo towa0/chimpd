@@ -50,7 +50,11 @@ export function decideChecker(
 
   if (resolved === null) return disabled('type checker disabled: typescript could not be resolved');
   const major = Number(resolved.version.split('.')[0]);
-  if (!(major < 7)) return disabled(`type checker disabled: target uses TypeScript ${major}`);
+  if (!(major < 7)) {
+    return disabled(
+      `type checker disabled: chimpd's own TypeScript copy, which the checker loads, is ${resolved.version}; the checker needs TypeScript below 7`,
+    );
+  }
   if (!fs.existsSync(path.join(targetRoot, tsconfigFile))) {
     return disabled(`type checker disabled: ${tsconfigFile} not found`);
   }

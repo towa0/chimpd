@@ -16,6 +16,8 @@ export interface PhaseReport {
   readonly name: PhaseName;
   readonly status: PhaseStatus;
   readonly statusReason: string | null;
+  /** The full error of a failed phase, such as its stack; the reason holds its first line. */
+  readonly detail?: string;
   readonly budgetMs: number;
   readonly spentMs: number;
 }
@@ -82,8 +84,9 @@ export interface GitInfo {
 /**
  * completed: everything in scope was checked. partial: something in scope was not checked, but the
  * run still checked something. inconclusive: a phase failed, or nothing in scope could be checked.
+ * nothing-checkable: source was in scope, but it produced no mutant and makes no outgoing call.
  */
-export type RunStatus = 'completed' | 'partial' | 'inconclusive' | 'nothing-in-scope' | 'error';
+export type RunStatus = 'completed' | 'partial' | 'inconclusive' | 'nothing-checkable' | 'nothing-in-scope' | 'error';
 
 export interface Checked {
   /** Mutants that got a verdict: killed, survived, uncovered or timed out. */
@@ -96,6 +99,8 @@ export interface Checked {
 
 export interface RunResult {
   readonly status: RunStatus;
+  /** Why the run is inconclusive or nothing-checkable; null for the other statuses. */
+  readonly statusReason: string | null;
   /** Set when status is error: why the run could not be carried out. */
   readonly error: string | null;
   readonly level: Level;

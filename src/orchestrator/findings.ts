@@ -1,4 +1,4 @@
-import type { MutantRecord, Preset } from '../core/index.js';
+import { firstErrorLine, type MutantRecord, type Preset } from '../core/index.js';
 import type { CallSite, FaultRunResult, SkipReason } from '../fault-run/index.js';
 import { mutationFindingKind, priorOf, severityOf } from '../severity/index.js';
 import type { MutationResult } from '../stryker-adapter/index.js';
@@ -60,6 +60,15 @@ function invalidReason(mutant: MutantRecord): string {
   return `${kind}: ${firstLine(mutant.statusReason)}`;
 }
 
+export const SUITE_FAILS = "the target's own tests fail before any mutant runs";
+
+function unplannedReason(result: MutationResult, file: string): string {
+  const batch = result.batches.find((entry) => entry.files.includes(file));
+  if (batch?.outcome === 'dry-run-failed') return `not mutated: ${SUITE_FAILS}`;
+  if (batch?.outcome === 'failed') return `mutants never planned: batch failed: ${firstErrorLine(batch.error) ?? 'no error reported'}`;
+  return 'mutants never planned: the budget ran out first';
+}
+
 /**
  * Findings and gaps from a mutation run. In test-only mode `findingMutants` is the set the changed
  * tests cover but do not kill, and only boundary mutants those tests cover are considered at all.
@@ -79,7 +88,7 @@ export function mutationItems(
     }
   }
   for (const file of result.notTested.unplannedFiles) {
-    skipped.push({ source: 'mutation', file, line: null, reason: 'mutants never planned: the budget ran out first' });
+    skipped.push({ source: 'mutation', file, line: null, reason: unplannedReason(result, file) });
   }
   const checked: Checked = {
     ...NOTHING_CHECKED,

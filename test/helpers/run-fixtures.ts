@@ -126,6 +126,7 @@ export function faultFinding(overrides: Partial<Finding> = {}): Finding {
 export function runResult(overrides: Partial<RunResult> = {}): RunResult {
   return {
     status: 'completed',
+    statusReason: null,
     error: null,
     level: 'poke',
     budgetMs: 120_000,

@@ -28,7 +28,13 @@ export interface WireTest {
 }
 
 export type WorkerMessage =
-  | { readonly type: 'dry-run'; readonly netMs: number; readonly tests: readonly WireTest[] }
+  | {
+      readonly type: 'dry-run';
+      readonly netMs: number;
+      readonly tests: readonly WireTest[];
+      /** Whether the test runner reported mutant coverage at all; Stryker then decides which tests cover each mutant. */
+      readonly coverageReported?: boolean;
+    }
   | { readonly type: 'plan'; readonly mutants: readonly WireMutant[] }
   | { readonly type: 'mutant'; readonly mutant: WireMutant }
   | { readonly type: 'done' }
@@ -44,6 +50,7 @@ export const STREAM_REPORTER = 'chimpd-stream';
 interface DryRunEvent {
   readonly timing: { readonly net: number };
   readonly result: {
+    readonly mutantCoverage?: unknown;
     readonly tests: readonly {
       readonly id: string;
       readonly name: string;
@@ -84,6 +91,7 @@ const streamReporter = {
     send({
       type: 'dry-run',
       netMs: event.timing.net,
+      coverageReported: event.result.mutantCoverage !== undefined,
       tests: event.result.tests.map((test) => ({
         id: test.id,
         name: test.name,

@@ -1,4 +1,4 @@
-import { PRESETS } from '../core/index.js';
+import { firstErrorLine, PRESETS } from '../core/index.js';
 import { exitCodeOf, LEVELS, type ExitOptions, type Finding, type Item, type RunResult } from '../orchestrator/index.js';
 
 const INDENT = '  ';
@@ -6,6 +6,15 @@ const SHORT_SHA = 7;
 
 function seconds(ms: number): string {
   return `${(ms / 1000).toFixed(1)} s`;
+}
+
+/** Reasons can carry a whole error with its stack; the text report shows only their first line. */
+function firstLine(text: string): string {
+  return text.split('\n').find((line) => line.trim() !== '')?.trim() ?? text;
+}
+
+function phaseReason(reason: string | null): string {
+  return reason === null ? '' : `: ${firstErrorLine(reason) ?? reason}`;
 }
 
 function plural(count: number, noun: string): string {
@@ -27,15 +36,21 @@ function verdictLine(result: RunResult, options: ExitOptions): string {
   if (result.status === 'nothing-in-scope') return `Result: nothing in scope (exit ${code})`;
   const findings = plural(result.findings.length, 'finding');
   if (result.status === 'inconclusive') {
-    return `Result: inconclusive, a phase failed or nothing in scope could be checked; ${findings} (exit ${code})`;
+    const reason = result.statusReason ?? 'a phase failed or nothing in scope could be checked';
+    return `Result: inconclusive, ${reason}; ${findings} (exit ${code})`;
+  }
+  if (result.status === 'nothing-checkable') {
+    const strict = options.strict === true ? ', --strict' : '; 2 with --strict';
+    return `Result: nothing checkable, ${result.statusReason ?? 'nothing in scope could be checked'} (exit ${code}${strict})`;
   }
   if (result.status === 'partial') {
     const strict = options.strict === true ? ', --strict' : '; 2 with --strict';
     return `Result: ${findings}, coverage partial: ${notChecked(result)} not checked, listed above (exit ${code}${strict})`;
   }
-  return result.findings.length > 0
-    ? `Result: ${findings} (exit ${code})`
-    : `Result: clean, everything in scope was checked (exit ${code})`;
+  if (result.findings.length > 0) return `Result: ${findings} (exit ${code})`;
+  return result.status === 'completed'
+    ? `Result: clean, everything in scope was checked (exit ${code})`
+    : `Result: ${findings} (exit ${code})`;
 }
 
 function header(result: RunResult): string[] {
@@ -60,6 +75,9 @@ function scopeSection(result: RunResult): string[] {
   for (const file of scope.changedSourceFiles) lines.push(`${INDENT}${file}`);
   for (const file of scope.changedTestFiles) lines.push(`${INDENT}${file} (test)`);
   for (const file of scope.boundaryFiles) lines.push(`${INDENT}${file} (reached by a changed test)`);
+  for (const { file, reason } of scope.ignoredFiles) {
+    if (reason === 'config-file') lines.push(`${INDENT}${file} (not checked: a tooling config file)`);
+  }
   for (const note of scope.notes) lines.push(`${INDENT}${location(note.file, note.line)}: ${note.message}`);
   return lines;
 }
@@ -77,10 +95,11 @@ function coverageSection(result: RunResult): string[] {
   if (gaps.length > 0) lines.push(`${INDENT}NOT CHECKED: ${gaps.join(', ')}; each is listed below`);
   for (const phase of result.phases) {
     if (phase.status === 'completed' || phase.status === 'not-run') continue;
-    const reason = phase.statusReason === null ? '' : `: ${phase.statusReason}`;
+    // A failed phase's reason is an error, shown once under Phases.
+    const reason = phase.status === 'error' ? '; the reason is under Phases' : phaseReason(phase.statusReason);
     lines.push(`${INDENT}NOT CHECKED: the ${phase.name} phase ended ${phase.status}${reason}`);
   }
-  if (lines.length === 1) lines.push(`${INDENT}nothing in scope was left unchecked`);
+  if (lines.length === 1 && result.status === 'completed') lines.push(`${INDENT}nothing in scope was left unchecked`);
   return lines;
 }
 
@@ -112,7 +131,7 @@ function groupedSection(title: string, items: readonly Item[], label: (entry: It
   if (items.length === 0) return [];
   const groups = new Map<string, Item[]>();
   for (const entry of items) {
-    const key = label(entry);
+    const key = firstLine(label(entry));
     groups.set(key, [...(groups.get(key) ?? []), entry]);
   }
   const lines = [`${title} (${items.length}):`];
@@ -128,7 +147,7 @@ function inconclusiveSection(items: readonly Item[]): string[] {
   if (items.length === 0) return [];
   return [
     `Inconclusive (${items.length}):`,
-    ...items.map((entry) => `${INDENT}${location(entry.file, entry.line)} ${entry.source}: ${entry.reason}`),
+    ...items.map((entry) => `${INDENT}${location(entry.file, entry.line)} ${entry.source}: ${firstLine(entry.reason)}`),
   ];
 }
 
@@ -146,8 +165,7 @@ function phaseSection(result: RunResult): string[] {
     'Phases:',
     ...result.phases.map((phase) => {
       const spent = phase.status === 'not-run' ? '' : ` ${seconds(phase.spentMs)} of ${seconds(phase.budgetMs)}`;
-      const reason = phase.statusReason === null ? '' : `: ${phase.statusReason}`;
-      return `${INDENT}${phase.name} ${phase.status}${spent}${reason}`;
+      return `${INDENT}${phase.name} ${phase.status}${spent}${phaseReason(phase.statusReason)}`;
     }),
   ];
 }
@@ -156,7 +174,7 @@ export function renderText(result: RunResult, options: ExitOptions = {}): string
   const shown = PRESETS[LEVELS[result.level]].findingsShown;
   const sections = [
     header(result),
-    result.status === 'error' ? [`Error: ${result.error ?? 'unknown error'}`] : [],
+    result.status === 'error' ? [`Error: ${firstErrorLine(result.error) ?? 'unknown error'}`] : [],
     scopeSection(result),
     coverageSection(result),
     groupedSection('Invalid mutants', result.invalid, (entry) => entry.reason),

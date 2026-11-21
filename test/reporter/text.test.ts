@@ -201,6 +201,14 @@ describe('text report', () => {
     );
   });
 
+  it('lists the config files it kept out of scope', () => {
+    const base = runResult();
+    const scope = base.scope === null ? null : { ...base.scope, ignoredFiles: [...base.scope.ignoredFiles, { file: 'vitest.config.ts', reason: 'config-file' as const }] };
+    const text = renderText(runResult({ scope }));
+    expect(text).toContain('  vitest.config.ts (not checked: a tooling config file)');
+    expect(text).not.toContain('README.md');
+  });
+
   it('mentions uncommitted changes', () => {
     const base = runResult();
     const text = renderText(runResult({ git: base.git === null ? null : { ...base.git, dirty: true } }));
@@ -213,5 +221,55 @@ describe('text report', () => {
       skipped: [{ source: 'mutation', file: 'src/a.ts', line: null, reason: 'mutants never planned: the budget ran out first' }],
     });
     for (const text of [renderText(runResult()), renderText(noisy)]) expect(text).toMatch(PRINTABLE);
+  });
+
+  it('reports a nothing-checkable run with its reason, never as clean', () => {
+    const result = runResult({
+      status: 'nothing-checkable',
+      statusReason: 'the changed code produces no mutants at this level and makes no outgoing calls',
+      findings: [],
+      checked: { mutants: 0, invalidMutants: 0, callSites: 0 },
+    });
+    const text = renderText(result);
+    expect(text).toContain(
+      'Result: nothing checkable, the changed code produces no mutants at this level and makes no outgoing calls (exit 0; 2 with --strict)',
+    );
+    expect(text).not.toContain('clean');
+    expect(text).not.toContain('nothing in scope was left unchecked');
+    expect(renderText(result, { strict: true })).toContain('(exit 2, --strict)');
+  });
+
+  it('gives the reason of an inconclusive run', () => {
+    const text = renderText(
+      runResult({ status: 'inconclusive', statusReason: 'no mutant in scope could run', findings: [], checked: { mutants: 0, invalidMutants: 2, callSites: 0 } }),
+    );
+    expect(text).toContain('Result: inconclusive, no mutant in scope could run; 0 findings (exit 2)');
+  });
+
+  it('shows a failed phase error as its first line, once, without repeated error prefixes', () => {
+    const stack = 'Error: Error: boom from config\nError: boom from config\n    at file:///x.mjs:4:7';
+    const text = renderText(
+      runResult({
+        status: 'inconclusive',
+        statusReason: 'the mutation phase failed',
+        findings: [],
+        phases: [
+          { name: 'mutation', status: 'error', statusReason: 'mutation batch 0 failed: boom from config', detail: stack, budgetMs: 84_000, spentMs: 22_000 },
+          { name: 'faults', status: 'error', statusReason: 'Error: boom from config\n    at file:///x.mjs:4:7', budgetMs: 97_000, spentMs: 2_000 },
+        ],
+      }),
+    );
+    expect(text.split('boom from config').length - 1).toBe(2);
+    expect(text).not.toContain('Error: Error:');
+    expect(text).not.toContain('at file:///');
+    expect(text).toContain('  mutation error 22.0 s of 84.0 s: mutation batch 0 failed: boom from config');
+    expect(text).toContain('  faults error 2.0 s of 97.0 s: boom from config');
+    expect(text).toContain('  NOT CHECKED: the mutation phase ended error; the reason is under Phases');
+  });
+
+  it('shows only the first line of a tool error', () => {
+    const text = renderText(runResult({ status: 'error', error: 'Error: Error: no config\n    at x (y.js:1:1)', git: null, scope: null, phases: [], findings: [] }));
+    expect(text).toContain('Error: no config\n');
+    expect(text).not.toContain('at x (y.js:1:1)');
   });
 });

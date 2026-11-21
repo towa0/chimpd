@@ -84,3 +84,40 @@ describe('target test output', () => {
     TIMEOUT_MS,
   );
 });
+
+describe('the target Vite log', () => {
+  it(
+    'does not reach this process when the target config fails to load, and goes to the sink when there is one',
+    async () => {
+      const broken = createSampleApp();
+      try {
+        broken.write('vitest.config.ts', "throw new Error('chimpd-broken-config');\n");
+        const request = {
+          targetRoot: broken.dir,
+          configFile: path.join(broken.dir, 'vitest.config.ts'),
+          ranges: [{ file: 'src/clients/profile.ts', startLine: 1, endLine: 40, kind: 'changed' as const, staticRegion: false }],
+          intensity: 1 as const,
+          budgetMs: 60_000,
+          vitestNode,
+        };
+        const stdout = vi.spyOn(process.stdout, 'write');
+        const stderr = vi.spyOn(process.stderr, 'write');
+        const consoleCalls = (['log', 'info', 'warn', 'error'] as const).map((method) => vi.spyOn(console, method));
+        const leaked = (): string =>
+          written(stdout) + written(stderr) + consoleCalls.flatMap((spy) => spy.mock.calls.map((call) => call.join(' '))).join('');
+        await expect(runFaults(request)).rejects.toThrow('chimpd-broken-config');
+        expect(leaked()).not.toContain('failed to load config');
+
+        let captured = '';
+        await expect(runFaults({ ...request, onTargetOutput: (text: string) => (captured += text) })).rejects.toThrow(
+          'chimpd-broken-config',
+        );
+        expect(captured).toContain('failed to load config');
+        expect(leaked()).not.toContain('failed to load config');
+      } finally {
+        broken.cleanup();
+      }
+    },
+    TIMEOUT_MS,
+  );
+});

@@ -43,6 +43,8 @@ export interface JsonPhase {
   readonly name: PhaseReport['name'];
   readonly status: PhaseReport['status'];
   readonly statusReason: string | null;
+  /** The full error of a failed phase, such as its stack; null otherwise. */
+  readonly detail: string | null;
   readonly budgetMs: number;
   readonly spentMs: number;
 }
@@ -59,6 +61,8 @@ export interface JsonCoverage {
 export interface JsonReport {
   readonly schemaVersion: typeof SCHEMA_VERSION;
   readonly status: RunResult['status'];
+  /** Why the run is inconclusive or nothing-checkable; null otherwise. */
+  readonly statusReason: string | null;
   readonly exitCode: number;
   /** Whether the exit code was computed with --strict, under which a partial run also exits 2. */
   readonly strict: boolean;
@@ -120,13 +124,14 @@ export function toJsonReport(result: RunResult, options: ExitOptions = {}): Json
   return {
     schemaVersion: SCHEMA_VERSION,
     status: result.status,
+    statusReason: result.statusReason,
     exitCode: exitCodeOf(result, options),
     strict: options.strict === true,
     error: result.error,
     level: result.level,
     preset: { name: preset.name, budgetMs: preset.budgetMs, mutationShare: preset.mutationShare },
-    budgetMs: result.budgetMs,
-    spentMs: result.spentMs,
+    budgetMs: Math.round(result.budgetMs),
+    spentMs: Math.round(result.spentMs),
     seed: result.seed,
     git: git === null ? null : { base: git.base, mergeBase: git.mergeBase, head: git.head, dirty: git.dirty },
     scope:
@@ -140,12 +145,13 @@ export function toJsonReport(result: RunResult, options: ExitOptions = {}): Json
             ignoredFiles: scope.ignoredFiles.map(({ file, reason }) => ({ file, reason })),
             notes: scope.notes.map(({ file, line, message }) => ({ file, line, message })),
           },
-    phases: result.phases.map(({ name, status, statusReason, budgetMs, spentMs }) => ({
+    phases: result.phases.map(({ name, status, statusReason, detail, budgetMs, spentMs }) => ({
       name,
       status,
       statusReason,
-      budgetMs,
-      spentMs,
+      detail: detail ?? null,
+      budgetMs: Math.round(budgetMs),
+      spentMs: Math.round(spentMs),
     })),
     findings: result.findings.map(finding),
     coverage: {

@@ -2,6 +2,7 @@ import { lstat, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
   git,
+  isConfigFile,
   isDeclarationFile,
   isTestFile,
   isTypeScriptFile,
@@ -16,6 +17,8 @@ import { analyzeSource, type LineSpan, type SourceShape } from './source-shape.j
 
 export { parseUnifiedDiff, unquoteGitPath } from './parse-diff.js';
 export type { FileDiff, Hunk } from './parse-diff.js';
+export { findOutgoingCalls } from './outgoing-calls.js';
+export type { OutgoingCall, OutgoingCallee } from './outgoing-calls.js';
 
 export interface DiffScopeOptions {
   readonly repoRoot: string;
@@ -27,6 +30,7 @@ export interface DiffScopeOptions {
 export type IgnoredReason =
   | 'not-typescript'
   | 'declaration-file'
+  | 'config-file'
   | 'deleted'
   | 'binary'
   | 'submodule'
@@ -145,6 +149,7 @@ async function ignoredReason(repoRoot: string, candidate: Candidate): Promise<Ig
   if (candidate.binary) return 'binary';
   if (!isTypeScriptFile(candidate.file)) return 'not-typescript';
   if (isDeclarationFile(candidate.file)) return 'declaration-file';
+  if (isConfigFile(candidate.file)) return 'config-file';
   // A link checked out on a platform with symlink support is a link on disk, whatever the index says.
   const stat = await lstat(path.join(repoRoot, candidate.file));
   return stat.isSymbolicLink() ? 'symlink' : null;

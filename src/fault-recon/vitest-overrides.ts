@@ -38,3 +38,22 @@ export function runVitest(vitestNode: VitestNodeModule, request: VitestRunReques
     { plugins: [...(request.plugins ?? [])] },
   );
 }
+
+/** A Vite logger that sends what Vite itself prints, such as a config that fails to load, to the target output sink. */
+export function targetViteLogger(onOutput: ((text: string) => void) | undefined): Vite.Logger {
+  const warned = new Set<string>();
+  const write = (message: string): void => onOutput?.(`${message}\n`);
+  return {
+    hasWarned: false,
+    info: write,
+    warn: write,
+    warnOnce(message) {
+      if (warned.has(message)) return;
+      warned.add(message);
+      write(message);
+    },
+    error: write,
+    clearScreen: () => undefined,
+    hasErrorLogged: () => false,
+  };
+}

@@ -10,6 +10,7 @@ import {
   findTargetConfig,
   mutatePatterns,
   planBatches,
+  reclassifyUncovered,
   resolveCheckerTypeScript,
   resolveOutcomes,
   type WireMutant,
@@ -134,7 +135,7 @@ describe('type checker decision', () => {
   it('is disabled, not fatal, when that copy is TypeScript 7', () => {
     expect(decideChecker(fixture, { version: '7.0.2', path: '/somewhere/typescript' })).toEqual({
       enabled: false,
-      reason: 'type checker disabled: target uses TypeScript 7',
+      reason: "type checker disabled: chimpd's own TypeScript copy, which the checker loads, is 7.0.2; the checker needs TypeScript below 7",
       typescriptVersion: '7.0.2',
       typescriptPath: '/somewhere/typescript',
     });
@@ -181,5 +182,21 @@ describe('outcome resolution', () => {
 
   it('accepts a result for a mutant that was never in the plan', () => {
     expect(resolveOutcomes(new Map(), new Map([['9', mutant('9', 'Killed')]]))).toHaveLength(1);
+  });
+
+  it('reports a survivor as uncovered when the dry run reported no coverage and no mutant of the batch was killed', () => {
+    const outcomes = resolveOutcomes(new Map(), new Map([['1', mutant('1', 'Survived')], ['2', mutant('2', 'CompileError')]]));
+    expect(reclassifyUncovered(outcomes, false).map((outcome) => [outcome.mutant.id, outcome.status, outcome.statusReason])).toEqual([
+      ['1', 'NoCoverage', 'no test runs this mutant: Stryker reported no coverage for its batch'],
+      ['2', 'CompileError', null],
+    ]);
+  });
+
+  it('keeps survivors when coverage was reported, unknown, or broken because a mutant was killed without it', () => {
+    const outcomes = resolveOutcomes(new Map(), new Map([['1', mutant('1', 'Survived')]]));
+    expect(reclassifyUncovered(outcomes, true).map((outcome) => outcome.status)).toEqual(['Survived']);
+    expect(reclassifyUncovered(outcomes, null).map((outcome) => outcome.status)).toEqual(['Survived']);
+    const withKill = resolveOutcomes(new Map(), new Map([['1', mutant('1', 'Survived')], ['2', mutant('2', 'Killed')]]));
+    expect(reclassifyUncovered(withKill, false).map((outcome) => outcome.status)).toEqual(['Survived', 'Killed']);
   });
 });

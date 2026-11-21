@@ -23,7 +23,8 @@ const ITEM = fields({ source: oneOf('mutation', 'fault'), file: 'string', line: 
 /** Schema version 1. Changing this object without bumping SCHEMA_VERSION is the mistake these tests exist to catch. */
 const SCHEMA_V1: Shape = fields({
   schemaVersion: 'number',
-  status: oneOf('completed', 'partial', 'inconclusive', 'nothing-in-scope', 'error'),
+  status: oneOf('completed', 'partial', 'inconclusive', 'nothing-checkable', 'nothing-in-scope', 'error'),
+  statusReason: nullable('string'),
   exitCode: 'number',
   strict: 'boolean',
   error: nullable('string'),
@@ -48,6 +49,7 @@ const SCHEMA_V1: Shape = fields({
       name: oneOf('mutation', 'faults'),
       status: oneOf('completed', 'budget-exhausted', 'inconclusive', 'error', 'not-run'),
       statusReason: nullable('string'),
+      detail: nullable('string'),
       budgetMs: 'number',
       spentMs: 'number',
     }),
@@ -190,5 +192,24 @@ describe('JSON report schema', () => {
     const text = renderJson(full);
     expect(text.endsWith('}\n')).toBe(true);
     expect(text.startsWith('{\n  "schemaVersion": 1,')).toBe(true);
+  });
+
+  it('keeps the full error of a failed phase as detail, and rounds every duration to an integer', () => {
+    const stack = 'Error: Error: boom\n    at x (y.js:1:1)';
+    const report = toJsonReport(
+      runResult({
+        spentMs: 45_250.7,
+        phases: [
+          { name: 'mutation', status: 'error', statusReason: 'mutation batch 0 failed: boom', detail: stack, budgetMs: 83_668.2, spentMs: 22_000.5 },
+          { name: 'faults', status: 'completed', statusReason: null, budgetMs: 100_462.8686, spentMs: 1_861.4 },
+        ],
+      }),
+    );
+    expect(report.phases).toEqual([
+      { name: 'mutation', status: 'error', statusReason: 'mutation batch 0 failed: boom', detail: stack, budgetMs: 83_668, spentMs: 22_001 },
+      { name: 'faults', status: 'completed', statusReason: null, detail: null, budgetMs: 100_463, spentMs: 1_861 },
+    ]);
+    expect(report.spentMs).toBe(45_251);
+    expect(report.budgetMs).toBe(120_000);
   });
 });
