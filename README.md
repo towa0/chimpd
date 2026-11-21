@@ -3,7 +3,7 @@
 Checks the code a branch changed in a TypeScript project tested with Vitest. It answers two questions, limited to what the diff touched:
 
 - Do the tests catch bugs in the changed code? It mutates the changed lines with Stryker and reports the mutants the tests let through.
-- Does the changed code survive a dependency that stops answering? It holds every outgoing `fetch` and `http.request` the changed code makes, as a server that accepts the connection and never replies, and reports calls that hang, mishandle the abort or are never awaited.
+- Does the changed code survive a dependency that stops answering? It holds every outgoing `fetch`, `http` and `https` request the changed code makes, as a server that accepts the connection and never replies, and reports calls that hang, mishandle the abort or are never awaited. This black hole is the only fault it injects.
 
 It runs within a fixed time budget and reports only what the diff touched.
 
@@ -40,6 +40,8 @@ npx chimpd run --level shake --strict --cwd packages/api
 
 Uncommitted and untracked files count as part of the branch. When only test files changed, the mutation phase mutates the source files those tests import, and only mutants that a changed test runs are reported. In that case the fault phase does not run.
 
+Tooling and config files are kept out of scope and listed in the report as not checked: any `*.config.*` TypeScript file (`vitest.config.ts`, `vite.config.mts`, `eslint.config.ts`, `stryker.config.mts` and the like), `stryker.conf.*`, and `vitest.workspace.*` or `vite.workspace.*`.
+
 ## Presets
 
 | | Poke | Prod | Shake |
@@ -66,8 +68,12 @@ Mutation phase:
 | `survived` (finding, base 55) | Tests ran the mutated code and still passed. |
 | `no-coverage` (finding, base 45) | No test runs the mutated code. |
 | killed or timed out | A test caught the mutant. Counted as checked. |
-| compile or runtime error | The mutant could not run. Listed as invalid with whether it failed to compile or crashed the runner, and the first error line. Not a finding. |
+| compile or runtime error | The mutant could not run. Listed as invalid with whether it failed to compile or crashed the runner, and the first error line. Not a finding, and a gap in coverage. |
 | not tested, ignored | Listed as skipped, with the reason. |
+
+Before any mutant runs, Stryker runs the tests related to the changed files with no mutant active. If any of them fails, no mutant is judged: the mutation phase is `inconclusive` with the reason "the target's own tests fail before any mutant runs", and its files are listed as not mutated.
+
+Stryker's Vitest runner reports no coverage at all when no test executes any mutant of a batch, and Stryker then runs every test against each mutant, which would report them as survivors. chimpd reports those mutants as `no-coverage` instead, unless one of the batch's mutants was killed, which would mean coverage collection itself failed.
 
 Fault phase, for each call site:
 
@@ -80,32 +86,45 @@ Fault phase, for each call site:
 | handled | The call's timeout fired and the test passed. Counted as checked. |
 | inconclusive | No reliable verdict; listed with the reason. |
 
+Call sites are found by running the tests, so a call no test makes would leave no trace. To close that gap, chimpd also reads the changed code for direct calls to `fetch` (also as `globalThis.fetch`), `http.request`, `http.get`, `https.request` and `https.get`, under any import style. Each one the tests never reached is listed as not checked: "changed call to fetch at src/a.ts:12 is not reached by any test". Calls through a client library such as axios are not read from the source; they are faulted when a test makes them.
+
 ## Output
 
-The text report shows the diff scope, a coverage summary, the findings most severe first, everything that was skipped or inconclusive with its reason, test files that replace HTTP entry points, the phase outcomes, and a result line. It is plain text, without color.
+The text report shows the diff scope, a coverage summary, the findings most severe first, everything that was skipped or inconclusive with its reason, test files that replace HTTP entry points, the phase outcomes, and a result line. It is plain text, without color. Errors are shown by their first line only; the JSON report keeps the full error.
 
 `--json` prints a report with `"schemaVersion": 1`. The version is raised on any change that removes, renames or retypes a field; new fields may appear without a version change. Top-level fields:
 
-- `status`: `completed`, `partial`, `inconclusive`, `nothing-in-scope` or `error`
+- `status` and `statusReason`: see [Run status](#run-status); the reason is set for `inconclusive` and `nothing-checkable`
 - `exitCode`, `strict`, `error`
 - `level`, `preset`, `budgetMs`, `spentMs`, `seed`
 - `git`: base, merge base, head, and whether the tree had uncommitted changes
-- `scope`: changed source and test files, ignored files, notes
-- `phases`: one entry per phase, with its status, reason, budget and time spent
+- `scope`: changed source and test files, ignored files with their reason, notes
+- `phases`: one entry per phase, with its status, reason, the full error as `detail` when it failed, budget and time spent
 - `findings`: every finding, with its severity and its mutation or fault detail
 - `coverage`: `checked` counts, plus `invalid`, `skipped`, `inconclusive` and `conflicts`, each item with its reason
 
-Nothing in scope is dropped silently. Whatever was not checked appears under `coverage` and in the text report.
+Every duration is in whole milliseconds. Nothing in scope is dropped silently: whatever was not checked appears under `coverage` and in the text report.
+
+## Run status
+
+| Status | Meaning | Exit code |
+| --- | --- | --- |
+| `completed` | Everything in scope was checked. The only status the text report calls clean. | 0, or 1 with findings |
+| `partial` | Something in scope was not checked, but the run checked something else. The report lists every gap. | 0 or 1 by findings; 2 with `--strict` |
+| `inconclusive` | A phase failed, or nothing in scope could be checked, for example when every mutant was invalid ("no mutant in scope could run"). | 2 |
+| `nothing-checkable` | Source was in scope, but the change produces no mutant at this level and makes no outgoing call, as with a change to types or comments. | 0; 2 with `--strict` |
+| `nothing-in-scope` | The branch changed no TypeScript source or test file. | 0 |
+| `error` | The run could not be carried out: not a git repository, missing base ref, no Vitest config, an unsupported Vitest, bad arguments. | 2 |
+
+Gaps that make a run partial include call sites over the preset cap, a budget that ran out after some results, a test file that replaces `fetch`, a call site with no verdict, an invalid mutant, and a changed call that no test reaches.
 
 ## Exit codes
 
 | Code | Meaning |
 | --- | --- |
-| 0 | No findings. |
-| 1 | At least one finding. |
-| 2 | A tool error (not a git repository, missing base ref, no Vitest config, an unsupported Vitest, bad arguments), a phase that failed, or a run that could not check anything in scope. |
-
-A partial run exits by its findings, 0 or 1. Examples of a partial run: call sites over the preset cap, a budget that ran out after some results, a test file that replaces `fetch`, or a call site with no verdict. The report lists every gap. With `--strict`, a partial run exits 2.
+| 0 | No findings, and the run is `completed`, `partial`, `nothing-checkable` or `nothing-in-scope`. |
+| 1 | At least one finding, and the run is `completed` or `partial`. |
+| 2 | The run is `inconclusive` or `error`; with `--strict`, also `partial` or `nothing-checkable`. |
 
 ## Known limits
 
@@ -113,11 +132,12 @@ A partial run exits by its findings, 0 or 1. Examples of a partial run: call sit
 - Under the `happy-dom` environment the fault phase is inconclusive: happy-dom replaces `fetch` and `Request` with its own, which chimpd cannot fault yet. Custom environments that replace them are reported as a patch.
 - The only fault is the black hole (a server that never answers). Error responses, malformed bodies and refused connections are not injected yet, although the presets already name them.
 - A test file that replaces `fetch` or the `http` entry points itself, for example with a mock library, prevents faulting for the calls made under it. It is reported as a conflict.
-- Call sites in projects with a custom Vitest runner are inconclusive, because the runner's own test seam cannot be relied on to separate the test body from its hooks.
 - Concurrent tests that reach the same call site are inconclusive, because a held request cannot be attributed to one of them.
 - The first call made after the fault deadline has released a test is inconclusive.
 - Calls made at import time or from hooks are never faulted. Their sites are reported as inconclusive.
 - The seed is recorded but does not change anything yet; no phase is randomized.
-- The Stryker type checker uses chimpd's own TypeScript 6, also for projects on TypeScript 7.
-- A mutant on a type guard, such as `typeof value !== 'string'`, usually fails to compile once mutated, so a change made only of such lines can end with no mutant checked. Those mutants are listed as invalid with the compiler's first error.
+- The Stryker type checker uses chimpd's own TypeScript 6, also for projects on TypeScript 7. The checker's version check tests that copy, not the project's. A project that does not type-check under it is mutated without the checker.
+- A mutant on a type guard, such as `typeof value !== 'string'`, usually fails to compile once mutated, so a change made only of such lines can end with no mutant checked. Those mutants are listed as invalid with the compiler's first error, and such a run is `inconclusive`.
+- A failing test is only noticed when it is related to the changed files, because Stryker runs only those tests. A failing test elsewhere in the suite does not stop the mutation phase, and no mutant is judged against it.
+- Projects with a custom Vitest runner are not tested.
 - When deciding whether to test static mutants at Shake, the test baseline is not known yet, so only the 20-line limit applies.

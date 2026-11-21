@@ -1,7 +1,7 @@
 {
   "name": "chimpd",
   "version": "0.1.0",
-  "description": "Measures whether a TypeScript project's tests catch bugs and whether its code survives dependency failures, scoped to what a branch changed.",
+  "description": "Measures whether a TypeScript project's tests catch bugs in the code a branch changed, and whether the outgoing calls that code makes survive a server that never answers.",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -22,6 +22,8 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "prepack": "npm run clean && npm run build",
     "typecheck": "tsc --noEmit && tsc --noEmit -p fixtures/sample-app",
     "lint": "eslint .",
     "test": "vitest run",

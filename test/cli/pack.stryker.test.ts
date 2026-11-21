@@ -24,12 +24,15 @@ function runBin(args: readonly string[]) {
   return spawnSync(process.execPath, [binFile, ...args], { encoding: 'utf8', windowsHide: true, timeout: RUN_TIMEOUT_MS });
 }
 
+const STALE_FILE = 'dist/stale-leftover.js';
+
 beforeAll(() => {
-  removeTree(path.join(repoRoot, 'dist'));
-  execFileSync(process.execPath, [path.join(repoNodeModules, 'typescript/bin/tsc'), '-p', 'tsconfig.build.json'], {
-    cwd: repoRoot,
-    stdio: 'pipe',
-  });
+  // A stale build that packing must replace: a bin that exits 42 and a file no source produces.
+  const dist = path.join(repoRoot, 'dist');
+  removeTree(dist);
+  fs.mkdirSync(path.join(dist, 'cli'), { recursive: true });
+  fs.writeFileSync(path.join(dist, 'cli', 'main.js'), '#!/usr/bin/env node\nprocess.exit(42);\n');
+  fs.writeFileSync(path.join(repoRoot, STALE_FILE), 'export {};\n');
   workDir = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'chimpd-pack-'));
   // npm is a script on Windows, so it is started through the shell everywhere.
   const packed = JSON.parse(
@@ -68,6 +71,11 @@ it('packs the built CLI, its library entry point and nothing from the sources or
   expect(packedFiles).toContain('package.json');
   expect(packedFiles.filter((file) => file.startsWith('src/') || file.startsWith('test/'))).toEqual([]);
   expect(fs.readFileSync(binFile, 'utf8').startsWith('#!/usr/bin/env node\n')).toBe(true);
+});
+
+it('builds a fresh dist when it packs, replacing a stale one', () => {
+  expect(packedFiles).not.toContain(STALE_FILE);
+  expect(fs.readFileSync(binFile, 'utf8')).not.toContain('process.exit(42)');
 });
 
 it('answers --help and rejects bad arguments from the packed bin', () => {
