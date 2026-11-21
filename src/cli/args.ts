@@ -7,6 +7,7 @@ export interface CliOptions {
   readonly base: string | undefined;
   readonly json: boolean;
   readonly strict: boolean;
+  readonly verbose: boolean;
   readonly seed: number | undefined;
   readonly cwd: string;
 }
@@ -18,13 +19,14 @@ export type ParsedArgs =
   | { readonly kind: 'error'; readonly message: string };
 
 export const USAGE = [
-  'Usage: chimpd run --level poke|prod|shake [--base <ref>] [--json] [--strict] [--seed <n>] [--cwd <dir>]',
+  'Usage: chimpd run --level poke|prod|shake [--base <ref>] [--json] [--strict] [--verbose] [--seed <n>] [--cwd <dir>]',
   '',
   'Options:',
   '  --level <name>  poke (2 min), prod (5 min) or shake (10 min); required',
   '  --base <ref>    the ref the branch is compared against; default origin/main',
   '  --json          print the versioned JSON report instead of text',
   '  --strict        exit 2 whenever anything in scope was not checked',
+  "  --verbose       pass on what the project's own tests print, to stderr",
   '  --seed <n>      a non-negative integer recorded with the run',
   '  --cwd <dir>     the project to check; default the current directory',
   '  -h, --help      print this help',
@@ -83,6 +85,7 @@ export function parseCliArgs(argv: readonly string[], defaultCwd: string): Parse
       base: values.base,
       json: values.json === true,
       strict: values.strict === true,
+      verbose: values.verbose === true,
       seed,
       cwd: path.resolve(defaultCwd, values.cwd ?? '.'),
     },
@@ -99,6 +102,7 @@ function parse(argv: readonly string[]) {
       base: { type: 'string' },
       json: { type: 'boolean' },
       strict: { type: 'boolean' },
+      verbose: { type: 'boolean' },
       seed: { type: 'string' },
       cwd: { type: 'string' },
       help: { type: 'boolean', short: 'h' },

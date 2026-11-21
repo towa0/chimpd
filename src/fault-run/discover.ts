@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { toPosix, type ScopeRange } from '../core/index.js';
 import { callSiteKey, projectFrames, type ProjectFrame } from '../fault-recon/call-site.js';
-import { pristineFingerprints, type Fingerprints } from '../fault-recon/conflicts.js';
+import { patchedBeforeTestsReason, pristineFingerprints, type Fingerprints } from '../fault-recon/conflicts.js';
 import type { VitestNodeModule } from '../fault-recon/index.js';
 import { priorOf } from '../severity/index.js';
 import { runInstrumented, type TestRecord } from './instrumented.js';
@@ -17,6 +17,8 @@ export interface DiscoveryRequest {
   /** Taken from this process when omitted. */
   readonly pristine?: Fingerprints;
   readonly timeoutMs?: number;
+  /** Receives what the target's own tests write to stdout and stderr; it is discarded without one. */
+  readonly onTargetOutput?: (text: string) => void;
 }
 
 // A call inside a callback, such as a Promise executor, is named after the function around it.
@@ -62,6 +64,7 @@ export async function discoverCallSites(request: DiscoveryRequest): Promise<Disc
     mode: { kind: 'recon' },
     options: { related: scopedFiles.map((file) => path.join(targetRoot, file)), passWithNoTests: true },
     ...(request.timeoutMs === undefined ? {} : { timeoutMs: request.timeoutMs }),
+    ...(request.onTargetOutput === undefined ? {} : { onTargetOutput: request.onTargetOutput }),
   });
   if (run.killed) {
     return {
@@ -82,7 +85,7 @@ export async function discoverCallSites(request: DiscoveryRequest): Promise<Disc
       return {
         ...EMPTY,
         status: 'inconclusive',
-        statusReason: `HTTP entry points were already patched before the tests loaded: ${event.patched.join(', ')}`,
+        statusReason: patchedBeforeTestsReason(event.patched, event.environment),
       };
     }
     const file = toPosix(path.relative(targetRoot, event.testFile));

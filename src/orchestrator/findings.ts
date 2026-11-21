@@ -12,6 +12,7 @@ const INVALID_STATUSES = new Set(['CompileError', 'RuntimeError']);
 export interface PhaseItems {
   readonly checked: Checked;
   readonly findings: readonly Finding[];
+  readonly invalid: readonly Item[];
   readonly skipped: readonly Item[];
   readonly inconclusive: readonly Item[];
 }
@@ -45,6 +46,20 @@ function mutantItem(mutant: MutantRecord, reason: string): Item {
   return { source: 'mutation', file: mutant.file, line: mutant.start.line, reason };
 }
 
+function firstLine(text: string | null): string {
+  return (
+    (text ?? '')
+      .split('\n')
+      .map((line) => line.trim())
+      .find((line) => line !== '') ?? 'Stryker reported no reason'
+  );
+}
+
+function invalidReason(mutant: MutantRecord): string {
+  const kind = mutant.status === 'CompileError' ? 'compile error' : 'runtime error';
+  return `${kind}: ${firstLine(mutant.statusReason)}`;
+}
+
 /**
  * Findings and gaps from a mutation run. In test-only mode `findingMutants` is the set the changed
  * tests cover but do not kill, and only boundary mutants those tests cover are considered at all.
@@ -71,7 +86,8 @@ export function mutationItems(
     mutants: considered.filter((mutant) => VERDICT_STATUSES.has(mutant.status)).length,
     invalidMutants: considered.filter((mutant) => INVALID_STATUSES.has(mutant.status)).length,
   };
-  return { checked, findings, skipped, inconclusive: [] };
+  const invalid = considered.filter((mutant) => INVALID_STATUSES.has(mutant.status)).map((mutant) => mutantItem(mutant, invalidReason(mutant)));
+  return { checked, findings, invalid, skipped, inconclusive: [] };
 }
 
 function skipReason(reason: SkipReason, preset: Preset): string {
@@ -113,5 +129,5 @@ export function faultItems(result: FaultRunResult, preset: Preset): PhaseItems {
     }
   }
   const skipped = result.skipped.map(({ site, reason }) => siteItem(site, skipReason(reason, preset)));
-  return { checked: { ...NOTHING_CHECKED, callSites }, findings, skipped, inconclusive };
+  return { checked: { ...NOTHING_CHECKED, callSites }, findings, invalid: [], skipped, inconclusive };
 }

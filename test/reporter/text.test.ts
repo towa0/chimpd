@@ -100,6 +100,29 @@ describe('text report', () => {
     expect(text).toContain('Result: inconclusive, a phase failed or nothing in scope could be checked; 0 findings (exit 2)');
   });
 
+  it('lists invalid mutants grouped by why they could not run', () => {
+    const text = renderText(
+      runResult({
+        checked: { mutants: 0, invalidMutants: 3, callSites: 0 },
+        invalid: [
+          { source: 'mutation', file: 'src/a.ts', line: 2, reason: "compile error: src/a.ts(2,7): error TS2345: Argument of type 'unknown'." },
+          { source: 'mutation', file: 'src/a.ts', line: 2, reason: "compile error: src/a.ts(2,7): error TS2345: Argument of type 'unknown'." },
+          { source: 'mutation', file: 'src/a.ts', line: 3, reason: 'runtime error: TypeError: total is not a function' },
+        ],
+      }),
+    );
+    expect(text).toContain(
+      [
+        'Invalid mutants (3):',
+        "  compile error: src/a.ts(2,7): error TS2345: Argument of type 'unknown'. (2 items)",
+        '    src/a.ts:2',
+        '  runtime error: TypeError: total is not a function (1 item)',
+        '    src/a.ts:3',
+      ].join('\n'),
+    );
+    expect(text.indexOf('Invalid mutants (3):')).toBeLessThan(text.indexOf('Findings, most severe first:'));
+  });
+
   it('counts invalid mutants separately', () => {
     const text = renderText(runResult({ checked: { mutants: 4, invalidMutants: 2, callSites: 0 } }));
     expect(text).toContain(

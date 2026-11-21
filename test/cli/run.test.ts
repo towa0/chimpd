@@ -70,6 +70,32 @@ describe('the run command', () => {
   });
 });
 
+describe('target test output', () => {
+  it('is not passed on without --verbose', async () => {
+    const run = await cli(['run', '--level', 'poke']);
+    expect(run.calls[0]?.onTargetOutput).toBeUndefined();
+  });
+
+  it('goes to stderr with --verbose, so that --json output on stdout stays parseable', async () => {
+    let stdout = '';
+    let stderr = '';
+    const code = await runCli(
+      ['run', '--level', 'poke', '--json', '--verbose'],
+      { stdout: (text) => (stdout += text), stderr: (text) => (stderr += text) },
+      {
+        cwd: '/work',
+        run: (options) => {
+          options.onTargetOutput?.('Not implemented: HTMLCanvasElement getContext\n');
+          return Promise.resolve(runResult());
+        },
+      },
+    );
+    expect(code).toBe(1);
+    expect(stderr).toBe('Not implemented: HTMLCanvasElement getContext\n');
+    expect(JSON.parse(stdout)).toMatchObject({ schemaVersion: 1 });
+  });
+});
+
 describe('argument errors', () => {
   it('print the problem and the usage on stderr and exit 2 without running anything', async () => {
     const run = await cli(['run', '--level', 'gentle']);

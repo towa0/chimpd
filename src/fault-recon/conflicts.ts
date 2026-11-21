@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import http from 'node:http';
 import https from 'node:https';
+import { environmentDigests, type EnvironmentDigests } from './environment.js';
 
 const DISPATCHER = Symbol.for('undici.globalDispatcher.1');
 
@@ -35,18 +36,30 @@ export interface Fingerprints {
   readonly entryPoints: Readonly<Record<string, string>>;
   /** null when the runtime has not created its default dispatcher. */
   readonly dispatcher: string | null;
+  /** What the target's test environment puts in place of an entry point, by name; empty without one. */
+  readonly environment: EnvironmentDigests;
 }
 
-function currentFingerprints(): Fingerprints {
-  const digests = Object.entries(entryPoints()).map(([name, value]) => [name, digest(value)] as const);
-  return { entryPoints: Object.fromEntries(digests), dispatcher: dispatcherDigest() };
+function currentDigests(): Record<string, string> {
+  return Object.fromEntries(Object.entries(entryPoints()).map(([name, value]) => [name, digest(value)]));
 }
 
-/** Fingerprints of this process, which must not have patched its HTTP entry points. */
-export async function pristineFingerprints(): Promise<Fingerprints> {
+/**
+ * Fingerprints of this process, which must not have patched its HTTP entry points. With a target,
+ * they also hold what that target's jsdom environment installs, so that it is not taken for a patch.
+ */
+export async function pristineFingerprints(targetRoot?: string): Promise<Fingerprints> {
   // Node creates its default dispatcher on the first fetch; an unknown scheme rejects before any I/O.
   await fetch('chimpd-probe:').catch(() => undefined);
-  return currentFingerprints();
+  const environment = targetRoot === undefined ? {} : await environmentDigests(targetRoot, digest);
+  return { entryPoints: currentDigests(), dispatcher: dispatcherDigest(), environment };
+}
+
+// The environment's own class is accepted only while it still extends the runtime's own one.
+function providedByEnvironment(pristine: Fingerprints, name: string, value: unknown): boolean {
+  const expected = pristine.environment[name];
+  if (expected === undefined || digest(value) !== expected || typeof value !== 'function') return false;
+  return digest(Object.getPrototypeOf(value)) === pristine.entryPoints[name];
 }
 
 function dispatcherPatched(pristine: Fingerprints): boolean {
@@ -56,12 +69,32 @@ function dispatcherPatched(pristine: Fingerprints): boolean {
 
 /** Names of the HTTP entry points that differ from the pristine runtime. */
 export function patchedSince(pristine: Fingerprints): string[] {
-  const current = currentFingerprints();
-  const patched = Object.keys(pristine.entryPoints).filter(
-    (name) => current.entryPoints[name] !== pristine.entryPoints[name],
-  );
+  const values = entryPoints();
+  const patched = Object.keys(pristine.entryPoints).filter((name) => {
+    if (digest(values[name]) === pristine.entryPoints[name]) return false;
+    return !providedByEnvironment(pristine, name, values[name]);
+  });
   if (dispatcherPatched(pristine)) patched.push('undici dispatcher');
   return patched;
+}
+
+/** Names the environments whose own HTTP entry points chimpd cannot fault, instead of calling them a patch. */
+export function patchedBeforeTestsReason(patched: readonly string[], environment: string | null | undefined): string {
+  if (environment === 'happy-dom') {
+    return `the happy-dom test environment replaces ${patched.join(', ')} with its own, which chimpd cannot fault yet`;
+  }
+  return `HTTP entry points were already patched before the tests loaded: ${patched.join(', ')}`;
+}
+
+interface WorkerState {
+  readonly environment?: { readonly name?: unknown };
+}
+
+/** The name of the Vitest environment this worker runs, from Vitest's own worker state; null when unknown. */
+export function testEnvironmentName(global: object = globalThis): string | null {
+  const state = (global as { __vitest_worker__?: WorkerState }).__vitest_worker__;
+  const name = state?.environment?.name;
+  return typeof name === 'string' ? name : null;
 }
 
 export interface PatchGuard {

@@ -11,7 +11,7 @@ It runs within a fixed time budget and reports only what the diff touched.
 
 - Node.js 22.12 or later
 - git, with the base ref available locally (for example `origin/main` after a fetch)
-- A project tested with Vitest 4.1 or later, below 6, with a `vitest.config.*` or `vite.config.*` at its root
+- A project tested with Vitest 4.1 or later, below 6, with a `vitest.config.*` or `vite.config.*` at its root, in the `node` or `jsdom` environment
 - TypeScript sources
 
 ## Install
@@ -34,6 +34,7 @@ npx chimpd run --level shake --strict --cwd packages/api
 | `--base <ref>` | The ref the branch is compared against, through its merge base with `HEAD`. Default `origin/main`. |
 | `--json` | Print the JSON report instead of text. |
 | `--strict` | Exit 2 whenever anything in scope was not checked. |
+| `--verbose` | Pass on what the project's own tests print. It goes to stderr, so `--json` output stays clean. Without it, that output is discarded. |
 | `--seed <n>` | An integer from 0 to 2147483647, recorded in the report. |
 | `--cwd <dir>` | The project to check. Default the current directory. |
 
@@ -65,7 +66,7 @@ Mutation phase:
 | `survived` (finding, base 55) | Tests ran the mutated code and still passed. |
 | `no-coverage` (finding, base 45) | No test runs the mutated code. |
 | killed or timed out | A test caught the mutant. Counted as checked. |
-| compile or runtime error | The mutant could not run. Counted separately, not a finding. |
+| compile or runtime error | The mutant could not run. Listed as invalid with whether it failed to compile or crashed the runner, and the first error line. Not a finding. |
 | not tested, ignored | Listed as skipped, with the reason. |
 
 Fault phase, for each call site:
@@ -92,7 +93,7 @@ The text report shows the diff scope, a coverage summary, the findings most seve
 - `scope`: changed source and test files, ignored files, notes
 - `phases`: one entry per phase, with its status, reason, budget and time spent
 - `findings`: every finding, with its severity and its mutation or fault detail
-- `coverage`: `checked` counts, plus `skipped`, `inconclusive` and `conflicts`, each item with its reason
+- `coverage`: `checked` counts, plus `invalid`, `skipped`, `inconclusive` and `conflicts`, each item with its reason
 
 Nothing in scope is dropped silently. Whatever was not checked appears under `coverage` and in the text report.
 
@@ -109,6 +110,7 @@ A partial run exits by its findings, 0 or 1. Examples of a partial run: call sit
 ## Known limits
 
 - Vitest and TypeScript only.
+- Under the `happy-dom` environment the fault phase is inconclusive: happy-dom replaces `fetch` and `Request` with its own, which chimpd cannot fault yet. Custom environments that replace them are reported as a patch.
 - The only fault is the black hole (a server that never answers). Error responses, malformed bodies and refused connections are not injected yet, although the presets already name them.
 - A test file that replaces `fetch` or the `http` entry points itself, for example with a mock library, prevents faulting for the calls made under it. It is reported as a conflict.
 - Call sites in projects with a custom Vitest runner are inconclusive, because the runner's own test seam cannot be relied on to separate the test body from its hooks.
@@ -116,4 +118,6 @@ A partial run exits by its findings, 0 or 1. Examples of a partial run: call sit
 - The first call made after the fault deadline has released a test is inconclusive.
 - Calls made at import time or from hooks are never faulted. Their sites are reported as inconclusive.
 - The seed is recorded but does not change anything yet; no phase is randomized.
+- The Stryker type checker uses chimpd's own TypeScript 6, also for projects on TypeScript 7.
+- A mutant on a type guard, such as `typeof value !== 'string'`, usually fails to compile once mutated, so a change made only of such lines can end with no mutant checked. Those mutants are listed as invalid with the compiler's first error.
 - When deciding whether to test static mutants at Shake, the test baseline is not known yet, so only the 20-line limit applies.

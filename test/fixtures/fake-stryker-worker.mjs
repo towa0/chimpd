@@ -16,6 +16,8 @@ const mutant = (id, status) => ({
 });
 
 process.once('message', () => {
+  process.stdout.write('FAKE-WORKER-STDOUT\n');
+  process.stderr.write('FAKE-WORKER-STDERR\n');
   const grandchild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
   fs.appendFileSync(process.env.CHIMPD_FAKE_PIDS, `${grandchild.pid}\n`);
 

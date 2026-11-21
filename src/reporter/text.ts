@@ -68,7 +68,7 @@ function coverageSection(result: RunResult): string[] {
   if (result.status === 'error' || result.status === 'nothing-in-scope') return [];
   const { mutants, invalidMutants, callSites } = result.checked;
   const lines = [`Coverage: ${plural(mutants, 'mutant')} and ${plural(callSites, 'call site')} checked`];
-  if (invalidMutants > 0) lines.push(`${INDENT}${plural(invalidMutants, 'invalid mutant')} failed to compile or crashed the runner`);
+  if (invalidMutants > 0) lines.push(`${INDENT}${plural(invalidMutants, 'invalid mutant')} failed to compile or crashed the runner; each is listed below`);
   const gaps = [
     result.skipped.length > 0 ? `${result.skipped.length} skipped` : null,
     result.inconclusive.length > 0 ? `${result.inconclusive.length} inconclusive` : null,
@@ -107,20 +107,18 @@ function findingsSection(result: RunResult, shown: number): string[] {
   return lines;
 }
 
-/** Skipped items repeat a reason many times, such as every mutant a budget cut off, so they are grouped. */
-function skippedSection(items: readonly Item[]): string[] {
+/** These lists repeat a reason many times, such as every mutant a budget cut off, so they are grouped by it. */
+function groupedSection(title: string, items: readonly Item[], label: (entry: Item) => string): string[] {
   if (items.length === 0) return [];
   const groups = new Map<string, Item[]>();
   for (const entry of items) {
-    const key = `${entry.source}\0${entry.reason}`;
+    const key = label(entry);
     groups.set(key, [...(groups.get(key) ?? []), entry]);
   }
-  const lines = [`Skipped (${items.length}):`];
-  for (const group of groups.values()) {
-    const first = group[0];
-    if (first === undefined) continue;
+  const lines = [`${title} (${items.length}):`];
+  for (const [key, group] of groups) {
     const places = [...new Set(group.map((entry) => location(entry.file, entry.line)))];
-    lines.push(`${INDENT}${first.source}: ${first.reason} (${plural(group.length, 'item')})`);
+    lines.push(`${INDENT}${key} (${plural(group.length, 'item')})`);
     lines.push(`${INDENT}${INDENT}${places.join(', ')}`);
   }
   return lines;
@@ -161,8 +159,9 @@ export function renderText(result: RunResult, options: ExitOptions = {}): string
     result.status === 'error' ? [`Error: ${result.error ?? 'unknown error'}`] : [],
     scopeSection(result),
     coverageSection(result),
+    groupedSection('Invalid mutants', result.invalid, (entry) => entry.reason),
     findingsSection(result, shown),
-    skippedSection(result.skipped),
+    groupedSection('Skipped', result.skipped, (entry) => `${entry.source}: ${entry.reason}`),
     inconclusiveSection(result.inconclusive),
     conflictSection(result),
     phaseSection(result),

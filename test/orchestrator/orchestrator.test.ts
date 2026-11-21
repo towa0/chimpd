@@ -430,6 +430,40 @@ describe('findings', () => {
     expect(exits(result)).toEqual([0, 0]);
   });
 
+  it('says why each invalid mutant could not run: compile error or runtime crash, with the first error line', async () => {
+    const repo = changedRepo();
+    const run = harness(repo, {
+      runMutation: () =>
+        Promise.resolve(
+          mutationResult({
+            mutants: [
+              killed,
+              mutant({
+                status: 'CompileError',
+                statusReason:
+                  "\nsrc/a.ts(2,7): error TS2345: Argument of type 'unknown' is not assignable to parameter of type 'string'.\nsrc/a.ts(4,1): error TS18047: 'm' is possibly 'null'.",
+              }),
+              mutant({ status: 'RuntimeError', statusReason: 'TypeError: total is not a function\n    at src/a.ts:2:7', start: { line: 3, column: 1 } }),
+              mutant({ status: 'CompileError', statusReason: null, start: { line: 4, column: 1 } }),
+            ],
+          }),
+        ),
+      runFaults: () => Promise.resolve(faultRun({ results: [siteResult()] })),
+    });
+    const result = await runChimpd(run.options());
+    expect(result.invalid).toEqual([
+      {
+        source: 'mutation',
+        file: 'src/a.ts',
+        line: 2,
+        reason: "compile error: src/a.ts(2,7): error TS2345: Argument of type 'unknown' is not assignable to parameter of type 'string'.",
+      },
+      { source: 'mutation', file: 'src/a.ts', line: 3, reason: 'runtime error: TypeError: total is not a function' },
+      { source: 'mutation', file: 'src/a.ts', line: 4, reason: 'compile error: Stryker reported no reason' },
+    ]);
+    expect(result.checked).toEqual({ mutants: 1, invalidMutants: 3, callSites: 1 });
+  });
+
   it('lists inconclusive and over-cap sites, reports the run as partial, and exits by findings', async () => {
     const repo = changedRepo();
     const run = harness(repo, {
@@ -498,6 +532,18 @@ describe('findings', () => {
     ]);
     expect(result.status).toBe('partial');
     expect(exits(result)).toEqual([1, 2]);
+  });
+
+  it('hands the target output sink to both phases', async () => {
+    const repo = changedRepo();
+    const run = harness(repo);
+    const onTargetOutput = (): void => undefined;
+    await runChimpd({ ...run.options(), onTargetOutput });
+    expect(run.mutationRequests.map((request) => request.onTargetOutput)).toEqual([onTargetOutput]);
+    expect(run.faultRequests.map((request) => request.onTargetOutput)).toEqual([onTargetOutput]);
+    await runChimpd(run.options());
+    expect(run.mutationRequests[1]?.onTargetOutput).toBeUndefined();
+    expect(run.faultRequests[1]?.onTargetOutput).toBeUndefined();
   });
 
   it('returns the seed it was given, and picks one when it was not', async () => {

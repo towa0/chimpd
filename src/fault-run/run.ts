@@ -19,6 +19,8 @@ export interface FaultRunRequest {
   readonly testDeadlineMs?: number;
   readonly vitestNode: VitestNodeModule;
   readonly now?: () => number;
+  /** Receives what the target's own tests write to stdout and stderr; it is discarded without one. */
+  readonly onTargetOutput?: (text: string) => void;
 }
 
 export const DEFAULT_TEST_DEADLINE_MS = 2000;
@@ -29,8 +31,14 @@ export async function runFaults(request: FaultRunRequest): Promise<FaultRunResul
   const budget = startBudget(request.budgetMs, request.now ?? realNow);
   const deadlineMs = request.testDeadlineMs ?? DEFAULT_TEST_DEADLINE_MS;
   const targetRoot = fs.realpathSync.native(request.targetRoot);
-  const pristine = await pristineFingerprints();
-  const shared = { targetRoot, configFile: request.configFile, vitestNode: request.vitestNode, pristine };
+  const pristine = await pristineFingerprints(targetRoot);
+  const shared = {
+    targetRoot,
+    configFile: request.configFile,
+    vitestNode: request.vitestNode,
+    pristine,
+    ...(request.onTargetOutput === undefined ? {} : { onTargetOutput: request.onTargetOutput }),
+  };
 
   const discovery = await discoverCallSites({ ...shared, ranges: request.ranges, timeoutMs: budget.remainingMs() });
   const { conflicts, outOfScopeSites } = discovery;

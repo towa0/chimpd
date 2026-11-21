@@ -77,6 +77,7 @@ const SCHEMA_V1: Shape = fields({
   ),
   coverage: fields({
     checked: fields({ mutants: 'number', invalidMutants: 'number', callSites: 'number' }),
+    invalid: list(ITEM),
     skipped: list(ITEM),
     inconclusive: list(ITEM),
     conflicts: list(fields({ testFile: 'string', patched: list('string') })),
@@ -122,6 +123,7 @@ const full = runResult({
   skipped: [{ source: 'mutation', file: 'src/a.ts', line: null, reason: 'mutants never planned: the budget ran out first' }],
   inconclusive: [{ source: 'fault', file: 'src/a.ts', line: 9, reason: 'the test did not reach the call site under the fault' }],
   conflicts: [{ testFile: 'test/n.test.ts', patched: ['fetch'] }],
+  invalid: [{ source: 'mutation', file: 'src/a.ts', line: 6, reason: 'compile error: src/a.ts(6,3): error TS2322: Type mismatch.' }],
 });
 
 describe('JSON report schema', () => {
@@ -163,6 +165,7 @@ describe('JSON report schema', () => {
   it('lists what was checked and every gap in the coverage section', () => {
     expect(toJsonReport(full).coverage).toEqual({
       checked: { mutants: 12, invalidMutants: 0, callSites: 3 },
+      invalid: [{ source: 'mutation', file: 'src/a.ts', line: 6, reason: 'compile error: src/a.ts(6,3): error TS2322: Type mismatch.' }],
       skipped: [{ source: 'mutation', file: 'src/a.ts', line: null, reason: 'mutants never planned: the budget ran out first' }],
       inconclusive: [{ source: 'fault', file: 'src/a.ts', line: 9, reason: 'the test did not reach the call site under the fault' }],
       conflicts: [{ testFile: 'test/n.test.ts', patched: ['fetch'] }],

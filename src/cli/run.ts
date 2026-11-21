@@ -46,6 +46,7 @@ export async function runCli(argv: readonly string[], io: CliIo, deps: Partial<C
       level: options.level,
       ...(options.base === undefined ? {} : { base: options.base }),
       ...(options.seed === undefined ? {} : { seed: options.seed }),
+      ...(options.verbose ? { onTargetOutput: (text: string) => io.stderr(text) } : {}),
     });
   } catch (error) {
     io.stderr(`chimpd: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`);

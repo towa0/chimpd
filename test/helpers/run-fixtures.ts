@@ -151,6 +151,7 @@ export function runResult(overrides: Partial<RunResult> = {}): RunResult {
     ],
     checked: { mutants: 12, invalidMutants: 0, callSites: 3 },
     findings: [faultFinding(), mutationFinding()],
+    invalid: [],
     skipped: [],
     inconclusive: [],
     conflicts: [],

@@ -13,17 +13,20 @@ function error(argv: string[]): string {
 describe('command line parsing', () => {
   it('reads every option of the run command', () => {
     expect(
-      parseCliArgs(['run', '--level', 'shake', '--base', 'main', '--json', '--strict', '--seed', '17', '--cwd', 'app'], CWD),
+      parseCliArgs(
+        ['run', '--level', 'shake', '--base', 'main', '--json', '--strict', '--verbose', '--seed', '17', '--cwd', 'app'],
+        CWD,
+      ),
     ).toEqual({
       kind: 'run',
-      options: { level: 'shake', base: 'main', json: true, strict: true, seed: 17, cwd: path.join(CWD, 'app') },
+      options: { level: 'shake', base: 'main', json: true, strict: true, verbose: true, seed: 17, cwd: path.join(CWD, 'app') },
     });
   });
 
   it('defaults to text, non-strict, no base, no seed and the current directory', () => {
     expect(parseCliArgs(['run', '--level=poke'], CWD)).toEqual({
       kind: 'run',
-      options: { level: 'poke', base: undefined, json: false, strict: false, seed: undefined, cwd: CWD },
+      options: { level: 'poke', base: undefined, json: false, strict: false, verbose: false, seed: undefined, cwd: CWD },
     });
   });
 

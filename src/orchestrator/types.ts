@@ -108,6 +108,8 @@ export interface RunResult {
   readonly checked: Checked;
   /** Most severe first. */
   readonly findings: readonly Finding[];
+  /** Mutants that could not run, each with whether it failed to compile or crashed, and the first error line. */
+  readonly invalid: readonly Item[];
   readonly skipped: readonly Item[];
   readonly inconclusive: readonly Item[];
   readonly conflicts: readonly FileConflict[];

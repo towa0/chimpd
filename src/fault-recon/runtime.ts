@@ -9,7 +9,7 @@ import type { RequestObservation } from '../fault-injector/blackhole.js';
 import { installCallCapture, type CallMetadata } from '../fault-injector/call-capture.js';
 import { installBlackHole } from '../fault-injector/interception.js';
 import { callSiteKey, parseStack, projectFrames } from './call-site.js';
-import { createPatchGuard, patchedSince } from './conflicts.js';
+import { createPatchGuard, patchedSince, testEnvironmentName } from './conflicts.js';
 import type { FaultMode, HeldObservation, RuntimeConfig, RuntimeEvent } from './protocol.js';
 
 export interface RunnerTask {
@@ -162,7 +162,7 @@ export function startRuntime(hooks: RuntimeHooks, config: RuntimeConfig): void {
 
   const patched = patchedSince(config.pristine);
   if (patched.length > 0) {
-    write({ type: 'conflict', testId: null, testFile: null, patched });
+    write({ type: 'conflict', testId: null, testFile: null, patched, environment: testEnvironmentName() });
     return;
   }
 

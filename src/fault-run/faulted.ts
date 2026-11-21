@@ -1,7 +1,7 @@
 import path from 'node:path';
 import type { Vite } from 'vitest/node';
 import type { BlackHoleObservation } from '../core/index.js';
-import type { Fingerprints } from '../fault-recon/conflicts.js';
+import { patchedBeforeTestsReason, type Fingerprints } from '../fault-recon/conflicts.js';
 import type { VitestNodeModule } from '../fault-recon/index.js';
 import type { HeldObservation, RuntimeEvent } from '../fault-recon/protocol.js';
 import { runInstrumented } from './instrumented.js';
@@ -17,6 +17,8 @@ export interface SiteRunRequest {
   readonly tests: readonly ReachingTest[];
   readonly deadlineMs: number;
   readonly timeoutMs?: number;
+  /** Receives what the target's own tests write to stdout and stderr; it is discarded without one. */
+  readonly onTargetOutput?: (text: string) => void;
 }
 
 export interface TestFaultRun {
@@ -99,26 +101,25 @@ export async function runFaultedSite(request: SiteRunRequest): Promise<SiteRun> 
     filters: [...new Set(tests.map(({ test }) => path.join(targetRoot, test.file)))],
     plugins: [raiseTestTimeout(request.deadlineMs)],
     ...(request.timeoutMs === undefined ? {} : { timeoutMs: request.timeoutMs }),
+    ...(request.onTargetOutput === undefined ? {} : { onTargetOutput: request.onTargetOutput }),
   });
 
   const started = new Set<string>();
   const ended = new Map<string, BodyEnd>();
   const patched = new Map<string, readonly string[]>();
-  let patchedBeforeSetup: readonly string[] | null = null;
+  let patchedBeforeSetup: Extract<RuntimeEvent, { type: 'conflict' }> | null = null;
   for (const event of run.events) {
     if (event.type === 'body-start') started.add(event.testId);
     else if (event.type === 'body-end') ended.set(event.testId, event);
     else if (event.type === 'conflict') {
-      if (event.testId === null) patchedBeforeSetup = event.patched;
+      if (event.testId === null) patchedBeforeSetup = event;
       else patched.set(event.testId, event.patched);
     }
   }
   const errorEscaped = run.unhandledErrors.some((error) => !isSerializedSentinel(error));
 
   function problemOf(test: FaultTestRef, end: BodyEnd | undefined): string | null {
-    if (patchedBeforeSetup !== null) {
-      return `HTTP entry points were already patched before the tests loaded: ${patchedBeforeSetup.join(', ')}`;
-    }
+    if (patchedBeforeSetup !== null) return patchedBeforeTestsReason(patchedBeforeSetup.patched, patchedBeforeSetup.environment);
     const conflict = patched.get(test.id);
     if (conflict !== undefined) return `the test replaced HTTP entry points: ${conflict.join(', ')}`;
     if (end === undefined) {

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { Writable } from 'node:stream';
 import type { Vite } from 'vitest/node';
 import { ensureWorkDir, realClearTimeout, realSetTimeout, removeTree, toPosix } from '../core/index.js';
 import { prependSetupFile, type VitestInlineOptions, type VitestNodeModule } from '../fault-recon/index.js';
@@ -19,6 +20,8 @@ export interface InstrumentedRequest {
   readonly plugins?: readonly Vite.Plugin[];
   /** The run is closed, workers included, when it is still going after this long. */
   readonly timeoutMs?: number;
+  /** Receives what the target's own tests write to stdout and stderr; it is discarded without one. */
+  readonly onTargetOutput?: (text: string) => void;
 }
 
 export type TestState = 'pass' | 'fail' | 'skip' | 'unknown';
@@ -58,6 +61,16 @@ function stubSource(config: RuntimeConfig): string {
     ');',
     '',
   ].join('\n');
+}
+
+// Vitest pipes every worker's stdout and stderr into these, so the target's tests never write to this process.
+function outputSink(onOutput: ((text: string) => void) | undefined): Writable {
+  return new Writable({
+    write(chunk: Buffer | string, _encoding, done) {
+      onOutput?.(typeof chunk === 'string' ? chunk : chunk.toString('utf8'));
+      done();
+    },
+  });
 }
 
 function isAlive(pid: number): boolean {
@@ -125,6 +138,7 @@ export async function runInstrumented(request: InstrumentedRequest): Promise<Ins
       'test',
       { ...request.options, reporters: [{}], root: targetRoot, config: request.configFile, watch: false },
       { plugins: [prependSetupFile(stubFile), ...(request.plugins ?? [])] },
+      { stdout: outputSink(request.onTargetOutput), stderr: outputSink(request.onTargetOutput) },
     );
     let killed = false;
     let crash: string | null = null;

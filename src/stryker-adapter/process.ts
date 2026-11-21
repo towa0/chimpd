@@ -17,6 +17,8 @@ export interface WorkerRequest {
   readonly killAfterMs: number;
   readonly entry?: string;
   readonly clock?: Clock;
+  /** Receives what the worker and the test runs under it write to stdout and stderr. */
+  readonly onOutput?: (text: string) => void;
   onMessage(message: WorkerMessage): void;
 }
 
@@ -59,15 +61,18 @@ export function runWorker(request: WorkerRequest): Promise<WorkerRun> {
       env: workerEnvironment(entry),
       // A process group of its own lets one signal reach every descendant on POSIX.
       detached: process.platform !== 'win32',
-      stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
+      stdio: ['ignore', request.onOutput === undefined ? 'ignore' : 'pipe', 'pipe', 'ipc'],
       windowsHide: true,
     });
 
     let outcome: WorkerOutcome | null = null;
     let error: string | null = null;
     let stderr = '';
+    child.stdout?.on('data', (chunk: Buffer) => request.onOutput?.(chunk.toString('utf8')));
     child.stderr?.on('data', (chunk: Buffer) => {
-      stderr = (stderr + chunk.toString('utf8')).slice(-4000);
+      const text = chunk.toString('utf8');
+      stderr = (stderr + text).slice(-4000);
+      request.onOutput?.(text);
     });
 
     const timer = clock.setTimeout(() => {

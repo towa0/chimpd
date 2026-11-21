@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Clock, ScopeRange } from '../../src/core/index.js';
 import { runMutation, type WorkerMessage } from '../../src/stryker-adapter/index.js';
 import { createTempRepo, type TempRepo } from '../helpers/temp-repo.js';
@@ -164,6 +164,37 @@ describe('budget enforcement', () => {
       onWorkerMessage: killOnResult(clock),
     });
     expect(result.batches).toMatchObject([{ outcome: 'killed-budget', planned: 3, tested: 1, elapsedMs: 3_600_000 }]);
+    expect(await waitUntilDead(grandchildren())).toBe(true);
+  });
+
+  it('hands what the worker writes to the output sink, and nothing to this process without one', async () => {
+    const clock = manualClock();
+    const stdout = vi.spyOn(process.stdout, 'write');
+    const stderr = vi.spyOn(process.stderr, 'write');
+    let captured = '';
+    const request = {
+      targetRoot: repo.dir,
+      ranges: [range('src/a.ts')],
+      intensity: 1 as const,
+      ignoreStatic: true,
+      budgetMs: 1200,
+      workerEntry: fakeWorker,
+      clock,
+      onWorkerMessage: killOnResult(clock),
+    };
+    await runMutation({
+      ...request,
+      onTargetOutput: (text) => {
+        captured += text;
+      },
+    });
+    expect(captured).toContain('FAKE-WORKER-STDOUT\n');
+    expect(captured).toContain('FAKE-WORKER-STDERR\n');
+    const quiet = manualClock();
+    await runMutation({ ...request, clock: quiet, onWorkerMessage: killOnResult(quiet) });
+    const written = [...stdout.mock.calls, ...stderr.mock.calls].map(([chunk]) => String(chunk)).join('');
+    expect(written).not.toContain('FAKE-WORKER');
+    vi.restoreAllMocks();
     expect(await waitUntilDead(grandchildren())).toBe(true);
   });
 

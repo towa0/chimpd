@@ -44,7 +44,12 @@ interface TestScoped {
 }
 
 export type RuntimeEvent =
-  | (TestScoped & { readonly type: 'conflict'; readonly patched: readonly string[] })
+  | (TestScoped & {
+      readonly type: 'conflict';
+      readonly patched: readonly string[];
+      /** The Vitest test environment in effect; set when the entry points were patched before the tests loaded. */
+      readonly environment?: string | null;
+    })
   | (TestScoped & { readonly type: 'call'; readonly path: 'fetch' | 'http'; readonly frames: readonly StackFrame[] })
   | { readonly type: 'body-start'; readonly testId: string; readonly testFile: string }
   | {

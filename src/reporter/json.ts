@@ -49,6 +49,8 @@ export interface JsonPhase {
 
 export interface JsonCoverage {
   readonly checked: { readonly mutants: number; readonly invalidMutants: number; readonly callSites: number };
+  /** Mutants that could not run, each with "compile error: " or "runtime error: " and the first error line. */
+  readonly invalid: readonly JsonItem[];
   readonly skipped: readonly JsonItem[];
   readonly inconclusive: readonly JsonItem[];
   readonly conflicts: readonly { readonly testFile: string; readonly patched: readonly string[] }[];
@@ -148,6 +150,7 @@ export function toJsonReport(result: RunResult, options: ExitOptions = {}): Json
     findings: result.findings.map(finding),
     coverage: {
       checked: { mutants: checked.mutants, invalidMutants: checked.invalidMutants, callSites: checked.callSites },
+      invalid: result.invalid.map(item),
       skipped: result.skipped.map(item),
       inconclusive: result.inconclusive.map(item),
       conflicts: result.conflicts.map(({ testFile, patched }) => ({ testFile, patched: [...patched] })),

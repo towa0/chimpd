@@ -43,6 +43,8 @@ export interface MutationRequest {
   readonly clock?: Clock;
   /** Sees every progress message of a batch after the adapter has recorded it. */
   readonly onWorkerMessage?: (message: WorkerMessage) => void;
+  /** Receives what Stryker and the target's tests write to stdout and stderr; it is discarded without one. */
+  readonly onTargetOutput?: (text: string) => void;
 }
 
 export type BatchOutcome = 'completed' | 'failed' | 'killed-over-share' | 'killed-budget' | 'not-launched';
@@ -195,6 +197,7 @@ async function runBatch(batch: Batch, context: BatchContext): Promise<BatchRun> 
     killAfterMs: Math.min(overShareMs, remainingMs),
     entry,
     clock: request.clock ?? realClock,
+    ...(request.onTargetOutput === undefined ? {} : { onOutput: request.onTargetOutput }),
     options: buildStrykerOptions({
       batch,
       preset: PRESETS[request.intensity],

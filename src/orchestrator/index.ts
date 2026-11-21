@@ -69,6 +69,8 @@ export interface RunOptions {
   readonly seed?: number;
   readonly now?: () => number;
   readonly deps?: Partial<OrchestratorDeps>;
+  /** Receives what the target's own tests write to stdout and stderr in either phase; discarded without one. */
+  readonly onTargetOutput?: (text: string) => void;
 }
 
 const MAX_SEED = 2 ** 31 - 1;
@@ -121,6 +123,7 @@ function filesNotChecked(source: Item['source'], ranges: readonly ScopeRange[], 
   return {
     checked: NOTHING_CHECKED,
     findings: [],
+    invalid: [],
     skipped: scopedFiles(ranges).map((file) => ({ source, file, line: null, reason })),
     inconclusive: [],
   };
@@ -211,6 +214,7 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
   const seed = options.seed ?? randomInt(0, MAX_SEED);
   const base = options.base ?? DEFAULT_BASE;
   const targetRoot = path.resolve(options.cwd);
+  const output = options.onTargetOutput === undefined ? {} : { onTargetOutput: options.onTargetOutput };
 
   let gitInfo: GitInfo | null = null;
   let runScope: RunScope | null = null;
@@ -223,6 +227,7 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
     phases: [],
     checked: NOTHING_CHECKED,
     findings: [],
+    invalid: [],
     skipped: [],
     inconclusive: [],
     conflicts: [],
@@ -269,7 +274,7 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
   }
 
   const phases: PhaseReport[] = [];
-  const collected: PhaseItems[] = [{ checked: NOTHING_CHECKED, findings: [], skipped: plan.scopeItems, inconclusive: [] }];
+  const collected: PhaseItems[] = [{ checked: NOTHING_CHECKED, findings: [], invalid: [], skipped: plan.scopeItems, inconclusive: [] }];
   const conflicts: FaultRunResult['conflicts'][number][] = [];
 
   const mutationMs = mutationBudgetMs({
@@ -299,6 +304,7 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
           mutationBudgetMs: mutationMs,
         }).ignoreStatic,
         budgetMs: mutationMs,
+        ...output,
       });
       const { status, reason } = mutationPhaseStatus(mutation);
       phases.push({ name: 'mutation', status, statusReason: reason, budgetMs: mutationMs, spentMs: Math.round(now() - startedAt) });
@@ -348,6 +354,7 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
           budgetMs: faultMs,
           vitestNode: vitest.node,
           now,
+          ...output,
         });
         phases.push({
           name: 'faults',
@@ -375,6 +382,7 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
   }
 
   const findings = collected.flatMap((items) => items.findings).sort(bySeverity);
+  const invalid = collected.flatMap((items) => items.invalid).sort(byLocation);
   const skipped = collected.flatMap((items) => items.skipped).sort(byLocation);
   const inconclusive = collected.flatMap((items) => items.inconclusive).sort(byLocation);
   const checked = collected.reduce<Checked>(
@@ -401,6 +409,7 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
     phases,
     checked,
     findings,
+    invalid,
     skipped,
     inconclusive,
     conflicts,
