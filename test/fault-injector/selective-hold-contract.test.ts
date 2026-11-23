@@ -73,11 +73,15 @@ describe('selective hold contract', () => {
   });
 
   it('holds the targeted fetch while another reaches the server', async () => {
-    const held = heldFetch(url, { signal: AbortSignal.timeout(50) });
+    const controller = new AbortController();
+    const heldRejects = expect(heldFetch(url, { signal: controller.signal })).rejects.toMatchObject({ name: 'TimeoutError' });
     const open = await openFetch(url);
     expect(open.status).toBe(200);
     expect(await open.text()).toBe('ok');
-    await expect(held).rejects.toMatchObject({ name: 'TimeoutError' });
+    expect(interception.blackHole.pendingCount).toBe(1);
+    controller.abort(new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
+    await heldRejects;
+    expect(interception.blackHole.pendingCount).toBe(0);
     expect(hits).toBe(1);
   });
 
