@@ -90,7 +90,7 @@ function faultSection(plan: RunPlan): string[] {
   if (faults === null) return [];
   if (faults.notRun !== null) return [`Fault phase: would not run: ${faults.notRun}`];
   const lines = [
-    `Fault phase: at most ${plural(faults.maxCallSites, 'call site')}, ${plural(faults.testsPerCallSite, 'test')} each`,
+    `Fault phase: at most ${plural(faults.maxCallSites, 'call site')}, ${plural(faults.testsPerCallSite, 'test')} each, faulted with ${faults.kinds.join(', ')}`,
     `Changed outgoing calls found in the source (${faults.calls.length}):`,
   ];
   if (faults.calls.length === 0) lines.push(`${INDENT}none`);

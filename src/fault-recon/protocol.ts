@@ -1,4 +1,4 @@
-import type { AbortKind, DeadlineMechanism, TestOutcome } from '../core/index.js';
+import type { AbortKind, DeadlineMechanism, FaultKind, ResponseUse, TestOutcome } from '../core/index.js';
 import type { StackFrame } from './call-site.js';
 import type { Fingerprints } from './conflicts.js';
 
@@ -13,6 +13,7 @@ export interface FaultMode {
   /** Tests whose body runs with the site held; every other test is skipped. */
   readonly testIds: readonly string[];
   readonly deadlineMs: number;
+  readonly faultKind: FaultKind;
 }
 
 export type RuntimeMode = ReconMode | FaultMode;
@@ -35,6 +36,17 @@ export interface HeldObservation {
   readonly abortKind: AbortKind | null;
   readonly method: string;
   readonly url: string;
+}
+
+/** One call to the site that got a fault answering at once. */
+export interface InjectedCall {
+  readonly method: string;
+  readonly url: string;
+  readonly path: 'fetch' | 'http' | 'unknown';
+  /** false when an http request had no error listener when it got the fault. */
+  readonly errorReachedCaller: boolean;
+  /** What the code did with the faulted response; null when none reached it. */
+  readonly response: ResponseUse | null;
 }
 
 interface TestScoped {
@@ -61,4 +73,8 @@ export type RuntimeEvent =
       /** Calls the body made to the faulted site; always 0 in a recon run. */
       readonly targetedCalls: number;
       readonly observations: readonly HeldObservation[];
+      /** Calls that got a fault answering at once; absent in a recon or black hole run. */
+      readonly injections?: readonly InjectedCall[];
+      /** Whether the body parsed the malformed JSON body; absent unless the fault is malformed-json. */
+      readonly jsonParsed?: boolean;
     };

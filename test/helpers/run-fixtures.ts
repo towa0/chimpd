@@ -64,10 +64,11 @@ export function site(overrides: Partial<CallSite> = {}): CallSite {
 export function siteResult(overrides: Partial<CallSiteResult> = {}): CallSiteResult {
   return {
     site: site(),
+    kind: 'blackhole',
     verdict: 'handled-timeout',
     findingKind: null,
     reason: 'every held request was aborted and its test passed',
-    tests: [{ test: { id: 't1', file: 'test/a.test.ts', name: 'loads' }, observations: [], problem: null }],
+    tests: [{ test: { id: 't1', file: 'test/a.test.ts', name: 'loads' }, observations: [], injected: null, problem: null }],
     ...overrides,
   };
 }
@@ -120,7 +121,7 @@ export function faultFinding(overrides: Partial<Finding> = {}): Finding {
     message: 'the call has no timeout of its own and relies on runtime transport defaults',
     severity: severityOf('hang-no-timeout', 0),
     mutation: null,
-    fault: { verdict: 'hang', path: 'http', tests: ['test/ledger.test.ts > posts a ledger entry'] },
+    fault: { kind: 'blackhole', verdict: 'hang', path: 'http', tests: ['test/ledger.test.ts > posts a ledger entry'] },
     ...overrides,
   };
 }
@@ -198,6 +199,7 @@ export function runPlan(overrides: Partial<RunPlan> = {}): RunPlan {
     },
     faults: {
       calls: [{ file: 'src/a.ts', line: 12, callee: 'fetch', scopeKind: 'changed' }],
+      kinds: ['blackhole'],
       maxCallSites: 3,
       testsPerCallSite: 1,
       notRun: null,

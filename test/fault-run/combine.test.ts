@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { BlackHoleObservation } from '../../src/core/index.js';
+import type { BlackHoleObservation, InjectedObservation } from '../../src/core/index.js';
 import { combineSite, inconclusiveSite } from '../../src/fault-run/combine.js';
 import type { TestFaultRun } from '../../src/fault-run/faulted.js';
 import type { CallSite } from '../../src/fault-run/types.js';
@@ -47,8 +47,24 @@ const undecided: BlackHoleObservation = { ...pending, testOutcome: 'failed' };
 let nextTest = 0;
 function ran(observations: readonly BlackHoleObservation[], problem: string | null = null): TestFaultRun {
   nextTest += 1;
-  return { test: { id: `t${nextTest}`, file: 'test/a.test.ts', name: `test ${nextTest}` }, observations, problem };
+  return { test: { id: `t${nextTest}`, file: 'test/a.test.ts', name: `test ${nextTest}` }, observations, injected: null, problem };
 }
+
+function injected(observation: InjectedObservation | null, problem: string | null = null): TestFaultRun {
+  nextTest += 1;
+  return { test: { id: `t${nextTest}`, file: 'test/a.test.ts', name: `test ${nextTest}` }, observations: [], injected: observation, problem };
+}
+
+const refusedHandled: InjectedObservation = {
+  kind: 'connection-refused',
+  attempts: 1,
+  errorReachedCaller: true,
+  testOutcome: 'passed',
+  errorEscaped: false,
+  response: null,
+  jsonParsed: null,
+};
+const refusedFailed: InjectedObservation = { ...refusedHandled, testOutcome: 'failed' };
 
 describe('combineSite', () => {
   it.each([
@@ -115,10 +131,56 @@ describe('combineSite', () => {
   it('builds an inconclusive result for a site that was never faulted', () => {
     expect(inconclusiveSite(site, 'why')).toEqual({
       site,
+      kind: 'blackhole',
       verdict: 'inconclusive',
       findingKind: null,
       reason: 'why',
       tests: [],
     });
+  });
+});
+
+describe('combineSite for a fault that answers at once', () => {
+  it('marks every result with its fault kind', () => {
+    expect(combineSite(site, [ran([handled])]).kind).toBe('blackhole');
+    expect(combineSite(site, [injected(refusedHandled)], 'connection-refused').kind).toBe('connection-refused');
+    expect(inconclusiveSite(site, 'why', 'connection-refused').kind).toBe('connection-refused');
+  });
+
+  it('is handled when every test handled the fault', () => {
+    const result = combineSite(site, [injected(refusedHandled), injected({ ...refusedHandled, attempts: 2 })], 'connection-refused');
+    expect(result).toMatchObject({ verdict: 'refusal-handled', findingKind: null, reason: 'every test handled the refused connection' });
+    expect(result.tests[0]?.injected?.verdict.verdict).toBe('refusal-handled');
+  });
+
+  it("reports a finding when any test mishandled it, with that test's reason", () => {
+    const result = combineSite(site, [injected(refusedHandled), injected(refusedFailed)], 'connection-refused');
+    expect(result).toMatchObject({
+      verdict: 'refusal-mishandled',
+      findingKind: 'refusal-mishandled',
+      reason: 'the test failed after the connection was refused',
+    });
+  });
+
+  it('keeps a finding when another test produced nothing usable', () => {
+    const result = combineSite(site, [injected(null, 'the test did not run under the fault'), injected(refusedFailed)], 'connection-refused');
+    expect(result.findingKind).toBe('refusal-mishandled');
+  });
+
+  it('is inconclusive, not handled, when one test has a problem', () => {
+    const result = combineSite(
+      site,
+      [injected(refusedHandled), injected(null, 'the test process ended before the test body finished')],
+      'connection-refused',
+    );
+    expect(result).toMatchObject({ verdict: 'inconclusive', reason: 'the test process ended before the test body finished' });
+  });
+
+  it('is inconclusive when no test produced an observation', () => {
+    expect(combineSite(site, [], 'connection-refused')).toMatchObject({
+      verdict: 'inconclusive',
+      reason: 'no test produced an observation for this site',
+    });
+    expect(combineSite(site, [injected(null)], 'connection-refused').verdict).toBe('inconclusive');
   });
 });

@@ -66,12 +66,14 @@ const PAIR_TEST = [
   '});',
   '',
   "it('gives up on the process when a dependency stalls', async () => {",
-  '  const timer = setTimeout(() => process.kill(process.pid), 150);',
+  // 300 ms leaves a loaded runner time to answer the real request in discovery, and still fires before a 400 ms fault deadline.
+  '  const timer = setTimeout(() => process.kill(process.pid), 300);',
   '  expect(await slow(server.url)).toBe(200);',
   '  clearTimeout(timer);',
   '});',
   '',
-  "it('runs under a short timeout', { timeout: 150 }, async () => {",
+  // The same margin: long enough for discovery on a loaded runner, short of a 400 ms fault deadline.
+  "it('runs under a short timeout', { timeout: 300 }, async () => {",
   '  expect(await second(server.url)).toBe(200);',
   '});',
   '',
@@ -87,4 +89,80 @@ export function addPairModule(repo: TempRepo): void {
   markers += 1;
   repo.write('src/pair.ts', PAIR_SOURCE);
   repo.write('test/pair.test.ts', PAIR_TEST.replace('MARKER', `chimpd-once-${process.pid}-${Date.now()}-${markers}`));
+}
+
+const CRASH_SOURCE = [
+  'export async function lookup(baseUrl: string): Promise<number> {',
+  '  const response = await fetch(`${baseUrl}/lookup`);',
+  '  return response.status;',
+  '}',
+  '',
+].join('\n');
+
+const CRASH_TEST = [
+  "import { afterAll, beforeAll, expect, it } from 'vitest';",
+  "import { lookup } from '../src/crash.js';",
+  "import { startServer, type TestServer } from './helpers/server.js';",
+  '',
+  'let server: TestServer;',
+  '',
+  "beforeAll(async () => {\n  server = await startServer({ 'GET /lookup': { body: null } });\n});",
+  'afterAll(() => server.close());',
+  '',
+  "it('looks a value up, and takes its process down when the lookup fails', async () => {",
+  '  try {',
+  '    expect(await lookup(server.url)).toBe(200);',
+  '  } catch {',
+  '    process.kill(process.pid);',
+  '    await new Promise(() => undefined);',
+  '  }',
+  '});',
+  '',
+].join('\n');
+
+const SETUP_SOURCE = [
+  'export async function load(baseUrl: string): Promise<number> {',
+  '  const response = await fetch(`${baseUrl}/load`);',
+  '  return response.status;',
+  '}',
+  '',
+].join('\n');
+
+const SETUP_TEST = [
+  "import fs from 'node:fs';",
+  "import os from 'node:os';",
+  "import path from 'node:path';",
+  "import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest';",
+  "import { load } from '../src/setup.js';",
+  "import { startServer, type TestServer } from './helpers/server.js';",
+  '',
+  "const marker = path.join(os.tmpdir(), 'MARKER');",
+  'let server: TestServer;',
+  '',
+  "beforeAll(async () => {\n  server = await startServer({ 'GET /load': { body: null } });\n});",
+  'beforeEach(() => {',
+  "  if (fs.existsSync(marker)) throw new Error('the fixture could not be prepared a second time');",
+  '});',
+  'afterAll(async () => {',
+  "  fs.writeFileSync(marker, '');",
+  '  await server.close();',
+  '});',
+  '',
+  "it('loads a value', async () => {",
+  '  expect(await load(server.url)).toBe(200);',
+  '});',
+  '',
+].join('\n');
+
+/** Adds a call whose test passes once and whose setup fails on every later run, before the body starts. */
+export function addSetupFailureModule(repo: TempRepo): void {
+  markers += 1;
+  repo.write('src/setup.ts', SETUP_SOURCE);
+  repo.write('test/setup.test.ts', SETUP_TEST.replace('MARKER', `chimpd-setup-${process.pid}-${Date.now()}-${markers}`));
+}
+
+/** Adds a call whose test kills its own process when the call fails, as it does under any fault that rejects it. */
+export function addCrashOnFaultModule(repo: TempRepo): void {
+  repo.write('src/crash.ts', CRASH_SOURCE);
+  repo.write('test/crash.test.ts', CRASH_TEST);
 }

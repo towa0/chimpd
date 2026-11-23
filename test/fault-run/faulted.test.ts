@@ -6,7 +6,7 @@ import { pristineFingerprints, type Fingerprints } from '../../src/fault-recon/c
 import { discoverCallSites } from '../../src/fault-run/discover.js';
 import { runFaultedSite, type SiteRun } from '../../src/fault-run/faulted.js';
 import type { CallSite, Discovery } from '../../src/fault-run/types.js';
-import { addPairModule } from '../helpers/fault-fixtures.js';
+import { addPairModule, addSetupFailureModule } from '../helpers/fault-fixtures.js';
 import { createSampleApp, history, type SampleApp } from '../helpers/sample-app.js';
 
 const TIMEOUT_MS = 60_000;
@@ -149,6 +149,7 @@ describe('faulted run boundaries', () => {
   beforeAll(async () => {
     app = createSampleApp();
     addPairModule(app);
+    addSetupFailureModule(app);
     discovery = await discover(app);
   }, TIMEOUT_MS);
 
@@ -175,6 +176,20 @@ describe('faulted run boundaries', () => {
       const run = await fault(app, siteAt(discovery, app, 'src/pair.ts', '/once`'));
       expect(run.tests).toEqual([
         expect.objectContaining({ observations: [], problem: 'the test did not reach the call site under the fault' }),
+      ]);
+    },
+    TIMEOUT_MS,
+  );
+
+  it(
+    'names the error of a setup hook that kept the test body from running',
+    async () => {
+      const run = await fault(app, siteAt(discovery, app, 'src/setup.ts', 'await fetch('));
+      expect(run.tests).toEqual([
+        expect.objectContaining({
+          observations: [],
+          problem: 'the test failed before its body ran: the fixture could not be prepared a second time',
+        }),
       ]);
     },
     TIMEOUT_MS,

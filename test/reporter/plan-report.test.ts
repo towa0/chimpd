@@ -39,7 +39,7 @@ describe('plan text report', () => {
     const blocked = renderPlanText(
       runPlan({
         runWouldFail: 'no Vitest config found in /work',
-        faults: { calls: [], maxCallSites: 3, testsPerCallSite: 1, notRun: 'only test files changed' },
+        faults: { calls: [], kinds: ['blackhole'], maxCallSites: 3, testsPerCallSite: 1, notRun: 'only test files changed' },
       }),
     );
     expect(blocked).toContain('A run would stop here: no Vitest config found in /work');

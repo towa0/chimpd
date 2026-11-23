@@ -1,8 +1,11 @@
 import type {
   BlackHoleObservation,
   BlackHoleVerdict,
-  BlackHoleVerdictKind,
   FaultFindingKind,
+  FaultKind,
+  FaultVerdictKind,
+  InjectedObservation,
+  InjectedVerdict,
   ScopeKind,
 } from '../core/index.js';
 import type { ProjectFrame } from '../fault-recon/call-site.js';
@@ -43,6 +46,8 @@ export type SkipReason = 'budget' | 'over-cap' | 'no-passing-test';
 
 export interface SkippedCallSite {
   readonly site: CallSite;
+  /** The fault kind that was skipped; null when the site was skipped for every kind. */
+  readonly kind: FaultKind | null;
   readonly reason: SkipReason;
 }
 
@@ -67,13 +72,17 @@ export interface TestFaultResult {
     readonly observation: BlackHoleObservation;
     readonly verdict: BlackHoleVerdict;
   }[];
+  /** For a fault that answers at once: the body's observation and its verdict. */
+  readonly injected: { readonly observation: InjectedObservation; readonly verdict: InjectedVerdict } | null;
   /** Why the test produced no usable observation; null when it did. */
   readonly problem: string | null;
 }
 
+/** One result per site and fault kind. */
 export interface CallSiteResult {
   readonly site: CallSite;
-  readonly verdict: BlackHoleVerdictKind;
+  readonly kind: FaultKind;
+  readonly verdict: FaultVerdictKind;
   readonly findingKind: FaultFindingKind | null;
   readonly reason: string;
   readonly tests: readonly TestFaultResult[];
@@ -82,7 +91,7 @@ export interface CallSiteResult {
 export interface FaultRunResult {
   readonly status: 'completed' | 'budget-exhausted' | 'inconclusive';
   readonly statusReason: string | null;
-  /** One entry per call site that was faulted or could not be attributed to a test. */
+  /** One entry per call site and fault kind that was faulted, or per site and kind that could not be attributed to a test. */
   readonly results: readonly CallSiteResult[];
   /** Call sites that were never faulted, each with the reason. */
   readonly skipped: readonly SkippedCallSite[];

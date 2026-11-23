@@ -36,9 +36,13 @@ describe('severity scale', () => {
     expect(order).toEqual([
       'hang-no-timeout',
       'abort-mishandled',
+      'refusal-mishandled',
+      'error-status-ignored',
       'survived',
+      'error-status-mishandled',
       'timeout-exceeds-budget',
       'invalid-ignore',
+      'malformed-json-mishandled',
       'no-coverage',
       'fire-and-forget',
     ]);

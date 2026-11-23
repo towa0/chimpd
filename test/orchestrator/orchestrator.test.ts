@@ -301,7 +301,7 @@ describe('budget exhaustion', () => {
             status: 'budget-exhausted',
             statusReason: 'the budget ran out before every call site was faulted',
             results: [siteResult({ site: site({ key: 'src/a.ts:9:1', line: 9 }) })],
-            skipped: [{ site: site(), reason: 'budget' }],
+            skipped: [{ site: site(), kind: 'blackhole', reason: 'budget' }],
           }),
         ),
     });
@@ -311,7 +311,7 @@ describe('budget exhaustion', () => {
       statusReason: 'the budget ran out before every call site was faulted',
     });
     expect(result.skipped).toEqual([
-      { source: 'fault', file: 'src/a.ts', line: 5, reason: 'not faulted: the budget ran out first' },
+      { source: 'fault', file: 'src/a.ts', line: 5, reason: 'not faulted: the budget ran out first', faultKind: 'blackhole' },
     ]);
     expect(result.checked.callSites).toBe(1);
     expect(exits(result)).toEqual([0, 2]);
@@ -496,13 +496,13 @@ describe('findings', () => {
                 reason: 'no timeout',
               }),
             ],
-            skipped: [{ site: site({ key: 'src/a.ts:8:1', line: 8 }), reason: 'over-cap' }],
+            skipped: [{ site: site({ key: 'src/a.ts:8:1', line: 8 }), kind: null, reason: 'over-cap' }],
           }),
         ),
     });
     const result = await runChimpd(run.options());
     expect(result.inconclusive).toEqual([
-      { source: 'fault', file: 'src/a.ts', line: 5, reason: 'the test did not reach the call site under the fault' },
+      { source: 'fault', file: 'src/a.ts', line: 5, reason: 'the test did not reach the call site under the fault', faultKind: 'blackhole' },
     ]);
     expect(result.skipped).toEqual([
       { source: 'fault', file: 'src/a.ts', line: 8, reason: 'not faulted: over the preset cap of 3 call sites' },
@@ -625,6 +625,74 @@ const FETCH_SOURCE = [
   '}',
   '',
 ].join('\n');
+
+describe('fault kinds', () => {
+  it('reports one result per site and kind, with the kind on findings and gaps, and counts each site once', async () => {
+    const repo = changedRepo();
+    const run = harness(repo, {
+      runFaults: () =>
+        Promise.resolve(
+          faultRun({
+            status: 'budget-exhausted',
+            statusReason: 'the budget ran out before every call site was faulted',
+            results: [
+              siteResult({ verdict: 'handled-timeout' }),
+              siteResult({
+                kind: 'connection-refused',
+                verdict: 'refusal-mishandled',
+                findingKind: 'refusal-mishandled',
+                reason: 'the test failed after the connection was refused',
+              }),
+              siteResult({ kind: 'connection-refused', site: site({ key: 'src/a.ts:9:1', line: 9 }), verdict: 'inconclusive', reason: 'the test did not reach the call site under the fault' }),
+            ],
+            skipped: [{ site: site({ key: 'src/a.ts:9:1', line: 9 }), kind: 'blackhole', reason: 'budget' }],
+          }),
+        ),
+    });
+    const result = await runChimpd(run.options({ level: 'shake' }));
+    expect(result.findings).toMatchObject([
+      { source: 'fault', kind: 'refusal-mishandled', line: 5, fault: { kind: 'connection-refused', verdict: 'refusal-mishandled' } },
+    ]);
+    expect(result.inconclusive).toEqual([
+      { source: 'fault', file: 'src/a.ts', line: 9, reason: 'the test did not reach the call site under the fault', faultKind: 'connection-refused' },
+    ]);
+    expect(result.skipped).toEqual([
+      { source: 'fault', file: 'src/a.ts', line: 9, reason: 'not faulted: the budget ran out first', faultKind: 'blackhole' },
+    ]);
+    expect(result.checked.callSites).toBe(1);
+  });
+
+  it.each([
+    ['connection-refused', 'refusal-mishandled', 'refusal-mishandled'],
+    ['http-500', 'status-ignored', 'error-status-ignored'],
+    ['http-500', 'status-mishandled', 'error-status-mishandled'],
+    ['malformed-json', 'parse-mishandled', 'malformed-json-mishandled'],
+  ] as const)('sets aside a %s finding (%s) under an ignore comment or a baseline entry like any other', async (kind, verdict, findingKind) => {
+    const comment = '  // chimpd-ignore: the caller retries the whole job\n';
+    const source = `export async function load(url: string): Promise<void> {\n${comment}  await fetch(url);\n}\n`;
+    const repo = changedRepo({ changedSource: source });
+    const refused = siteResult({
+      kind,
+      site: site({ key: 'src/a.ts:3:9', line: 3, column: 9 }),
+      verdict,
+      findingKind,
+      reason: 'the fault was not handled',
+    });
+    const run = harness(repo, { runFaults: () => Promise.resolve(faultRun({ results: [refused] })) });
+    const result = await runChimpd(run.options({ level: 'shake' }));
+    expect(result.findings).toEqual([]);
+    expect(result.ignored).toMatchObject([{ by: 'inline', finding: { kind: findingKind, fault: { kind } } }]);
+
+    repo.write('src/a.ts', source.replace(comment, ''));
+    repo.commit('Drop the comment');
+    repo.write(BASELINE_FILE, serializeBaseline([{ source: 'fault', file: 'src/a.ts', function: 'load', kind: findingKind, reason: null }]));
+    const moved = siteResult({ ...refused, site: site({ key: 'src/a.ts:2:9', line: 2, column: 9 }) });
+    const again = harness(repo, { runFaults: () => Promise.resolve(faultRun({ results: [moved] })) });
+    const baselined = await runChimpd(again.options({ level: 'shake' }));
+    expect(baselined.findings).toEqual([]);
+    expect(baselined.ignored).toMatchObject([{ by: 'baseline', finding: { kind: findingKind } }]);
+  });
+});
 
 describe('verdict honesty', () => {
   it('is inconclusive, exit 2, when every mutant in scope was invalid and nothing else was checked', async () => {

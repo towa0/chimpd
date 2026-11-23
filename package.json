@@ -1,7 +1,7 @@
 {
   "name": "chimpd",
   "version": "0.1.0",
-  "description": "Measures whether a TypeScript project's tests catch bugs in the code a branch changed, and whether the outgoing calls that code makes survive a server that never answers.",
+  "description": "Measures whether a TypeScript project's tests catch bugs in the code a branch changed, and whether the outgoing calls that code makes survive a dependency that hangs, answers with an error or a malformed body, or refuses the connection.",
   "license": "MIT",
   "type": "module",
   "engines": {

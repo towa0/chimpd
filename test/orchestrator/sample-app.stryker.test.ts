@@ -42,10 +42,13 @@ it(
 
     expect(result.error).toBeNull();
     const faults = result.findings.filter((finding) => finding.source === 'fault');
-    expect(faults.map((finding) => [finding.kind, finding.file, finding.functionName])).toEqual([
-      ['hang-no-timeout', 'src/clients/ledger.ts', 'postLedgerEntry'],
-      ['hang-no-timeout', 'src/clients/profile.ts', 'fetchProfile'],
-      ['fire-and-forget', 'src/telemetry.ts', 'trackEvent'],
+    expect(faults.map((finding) => [finding.kind, finding.fault?.kind, finding.file, finding.functionName])).toEqual([
+      ['hang-no-timeout', 'blackhole', 'src/clients/ledger.ts', 'postLedgerEntry'],
+      ['hang-no-timeout', 'blackhole', 'src/clients/profile.ts', 'fetchProfile'],
+      ['error-status-ignored', 'http-500', 'src/clients/inventory.ts', 'checkStock'],
+      ['error-status-mishandled', 'http-500', 'src/clients/ledger.ts', 'postLedgerEntry'],
+      ['error-status-mishandled', 'http-500', 'src/clients/profile.ts', 'fetchProfile'],
+      ['fire-and-forget', 'blackhole', 'src/telemetry.ts', 'trackEvent'],
     ]);
     expect(result.conflicts).toEqual([{ testFile: 'test/notifications.test.ts', patched: ['fetch'] }]);
     expect(result.status).toBe('partial');

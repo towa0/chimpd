@@ -1,5 +1,5 @@
 import type { BaselineEntry } from '../baseline/index.js';
-import { PRESETS } from '../core/index.js';
+import { PRESETS, type FaultKind } from '../core/index.js';
 import {
   exitCodeOf,
   LEVELS,
@@ -32,7 +32,12 @@ export interface JsonFinding {
     readonly coveredBy: readonly string[];
     readonly statement: string | null;
   } | null;
-  readonly fault: { readonly verdict: string; readonly path: 'fetch' | 'http'; readonly tests: readonly string[] } | null;
+  readonly fault: {
+    readonly kind: FaultKind;
+    readonly verdict: string;
+    readonly path: 'fetch' | 'http';
+    readonly tests: readonly string[];
+  } | null;
 }
 
 export interface JsonIgnoredFinding extends JsonFinding {
@@ -64,6 +69,8 @@ export interface JsonItem {
   readonly file: string;
   readonly line: number | null;
   readonly reason: string;
+  /** The fault kind the item is about; null when it applies to every kind or is not about a fault. */
+  readonly faultKind: FaultKind | null;
 }
 
 export interface JsonPhase {
@@ -140,7 +147,7 @@ function finding(entry: Finding): JsonFinding {
             coveredBy: [...mutation.coveredBy],
             statement: mutation.statement,
           },
-    fault: fault === null ? null : { verdict: fault.verdict, path: fault.path, tests: [...fault.tests] },
+    fault: fault === null ? null : { kind: fault.kind, verdict: fault.verdict, path: fault.path, tests: [...fault.tests] },
   };
 }
 
@@ -158,7 +165,7 @@ function baselineEntry(entry: BaselineEntry): JsonBaselineEntry {
 }
 
 function item(entry: Item): JsonItem {
-  return { source: entry.source, file: entry.file, line: entry.line, reason: entry.reason };
+  return { source: entry.source, file: entry.file, line: entry.line, reason: entry.reason, faultKind: entry.faultKind ?? null };
 }
 
 /** The versioned report, built field by field so that a change to the internal types cannot reshape it unnoticed. */

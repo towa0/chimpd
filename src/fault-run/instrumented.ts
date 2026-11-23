@@ -31,6 +31,8 @@ export interface TestRecord {
   readonly file: string;
   readonly name: string;
   readonly state: TestState;
+  /** The first error Vitest recorded for the test, a failing hook's included; null when there is none. */
+  readonly error: string | null;
 }
 
 export interface InstrumentedRun {
@@ -103,7 +105,7 @@ interface StateTask {
   readonly id: string;
   readonly name: string;
   readonly type: string;
-  readonly result?: { readonly state?: string } | undefined;
+  readonly result?: { readonly state?: string; readonly errors?: readonly { readonly message?: unknown }[] } | undefined;
   readonly tasks?: readonly StateTask[];
 }
 
@@ -115,7 +117,10 @@ function stateOf(task: StateTask): TestState {
 function collectTests(tasks: readonly StateTask[], file: string, parents: readonly string[]): TestRecord[] {
   return tasks.flatMap((task) => {
     const names = [...parents, task.name];
-    if (task.type === 'test') return [{ id: task.id, file, name: names.join(' > '), state: stateOf(task) }];
+    if (task.type === 'test') {
+      const message = task.result?.errors?.[0]?.message;
+      return [{ id: task.id, file, name: names.join(' > '), state: stateOf(task), error: typeof message === 'string' ? message : null }];
+    }
     return collectTests(task.tasks ?? [], file, names);
   });
 }

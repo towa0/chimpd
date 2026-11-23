@@ -68,7 +68,7 @@ describe('fault run under the jsdom environment', () => {
       const result = await run(domApp());
       expect(result.statusReason).toBeNull();
       expect(result.status).toBe('completed');
-      expect(verdicts(result.results)).toEqual({
+      expect(verdicts(result.results.filter((entry) => entry.kind === 'blackhole'))).toEqual({
         'src/clients/inventory.ts checkStock': 'handled-timeout',
         'src/clients/ledger.ts postLedgerEntry': 'hang',
         'src/clients/profile.ts fetchProfile': 'hang',

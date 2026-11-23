@@ -43,6 +43,7 @@ export interface JsonPlan {
   } | null;
   readonly faults: {
     readonly calls: readonly { readonly file: string; readonly line: number; readonly callee: string; readonly scopeKind: string }[];
+    readonly kinds: readonly string[];
     readonly maxCallSites: number;
     readonly testsPerCallSite: number;
     readonly notRun: string | null;
@@ -108,6 +109,7 @@ export function toJsonPlan(plan: RunPlan): JsonPlan {
         ? null
         : {
             calls: faults.calls.map(({ file, line, callee, scopeKind }) => ({ file, line, callee, scopeKind })),
+            kinds: [...faults.kinds],
             maxCallSites: faults.maxCallSites,
             testsPerCallSite: faults.testsPerCallSite,
             notRun: faults.notRun,

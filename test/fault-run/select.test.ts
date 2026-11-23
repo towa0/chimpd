@@ -107,7 +107,7 @@ describe('selectCallSites', () => {
   it('skips a site that no passing test reaches', () => {
     const orphan = site('src/payments/charge.ts', 'chargeCard', { reachedBy: [] });
     const selection = selectCallSites([orphan, site('src/a.ts', 'call')], PRESETS[1]);
-    expect(selection.skipped).toEqual([{ site: orphan, reason: 'no-passing-test' }]);
+    expect(selection.skipped).toEqual([{ site: orphan, kind: null, reason: 'no-passing-test' }]);
     expect(keys(selection.planned)).toEqual(['src/a.ts']);
   });
 
@@ -175,7 +175,7 @@ describe('selectCallSites with a seed', () => {
     const orphan = site('src/orphan.ts', 'call', { reachedBy: [] });
     const warm = site('src/warmup.ts', 'warm', { reachedBy: [], unattributedCalls: 1 });
     const selection = selectCallSites([orphan, warm, site('src/a.ts', 'call')], PRESETS[1], 5);
-    expect(selection.skipped).toEqual([{ site: orphan, reason: 'no-passing-test' }]);
+    expect(selection.skipped).toEqual([{ site: orphan, kind: null, reason: 'no-passing-test' }]);
     expect(selection.unattributable).toEqual([warm]);
     expect(keys(selection.planned)).toEqual(['src/a.ts']);
   });

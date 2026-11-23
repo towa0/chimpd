@@ -221,4 +221,14 @@ describe('stale baseline entries', () => {
     expect(applyIgnores(input(dir, { ...ranges, baseline: baseline([faultEntry]), faulted: [inconclusive] })).stale).toEqual([]);
     expect(applyIgnores(input(dir, { ...ranges, baseline: baseline([faultEntry]), faulted: [] })).stale).toEqual([]);
   });
+
+  it('judge a fault entry only by results of the fault kind its finding comes from', () => {
+    const dir = project({ 'src/f.ts': FETCH });
+    const ranges = { mutationRanges: [], faultRanges: [range('src/f.ts', 1, 3)] };
+    const hangEntry: BaselineEntry = { source: 'fault', file: 'src/f.ts', function: 'load', kind: 'hang-no-timeout', reason: null };
+    const refusalEntry: BaselineEntry = { source: 'fault', file: 'src/f.ts', function: 'load', kind: 'refusal-mishandled', reason: null };
+    const refusedHandled = siteResult({ site: site({ file: 'src/f.ts', functionName: 'load' }), kind: 'connection-refused', verdict: 'refusal-handled', findingKind: null });
+    const outcome = applyIgnores(input(dir, { ...ranges, baseline: baseline([hangEntry, refusalEntry]), faulted: [refusedHandled] }));
+    expect(outcome.stale).toEqual([refusalEntry]);
+  });
 });

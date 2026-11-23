@@ -15,6 +15,7 @@ import {
   type PlanOptions,
   type RunPlan,
 } from '../../src/plan/index.js';
+import { isRunnableKind } from '../../src/fault-run/index.js';
 import { planBatches } from '../../src/stryker-adapter/index.js';
 import { createTempRepo, type TempRepo } from '../helpers/temp-repo.js';
 
@@ -146,6 +147,19 @@ describe('planRun', () => {
     expect(result.estimate).toMatchObject({ mutationMs, faultMs, totalMs: mutationMs + faultMs });
     expect(result.estimate?.derivation.join('\n')).toMatch(/assumed/);
     expect(result.estimate?.derivation.join('\n')).toContain('12 mutants');
+  });
+
+  it('lists the fault kinds a run would use and counts a run per site and kind in the estimate', async () => {
+    const deps: Partial<PlanDeps> = {
+      countMutants: () => Promise.resolve([{ file: 'src/a.ts', mutants: 12, moduleLevel: 0, reason: null }]),
+    };
+    const result = await plan(changedRepo(), { level: 'shake', deps });
+    const kinds = PRESETS[3].faultKinds.filter(isRunnableKind);
+    expect(result.faults?.kinds).toEqual(kinds);
+    const tests = PRESETS[3].testsPerCallSite * ASSUMED_TEST_MS;
+    const perSite = 2000 + tests + (kinds.length - 1) * tests;
+    expect(result.estimate?.faultMs).toBe(ASSUMED_DISCOVERY_MS + perSite);
+    expect(result.estimate?.derivation.join('\n')).toContain(`${kinds.length} fault kinds`);
   });
 
   it('caps each part of the estimate at its budget', async () => {

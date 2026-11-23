@@ -6,10 +6,16 @@ export type {
   DeadlineMechanism,
   FaultFindingKind,
   FaultKind,
+  FaultVerdictKind,
+  InjectedFaultKind,
+  InjectedObservation,
+  InjectedVerdict,
+  InjectedVerdictKind,
   Intensity,
   MutantRecord,
   MutantStatus,
   Position,
+  ResponseUse,
   ScopeKind,
   ScopeMode,
   ScopeRange,
@@ -20,6 +26,7 @@ export type { Budget } from './budget.js';
 export { realClearTimeout, realClock, realNow, realSetTimeout } from './clock.js';
 export type { Clock } from './clock.js';
 export { firstErrorLine } from './errors.js';
+export { FAULT_FINDING_KINDS, FINDING_FAULT_KIND } from './faults.js';
 export { git, GitError, mergeBase, resolveSha } from './git.js';
 export { isConfigFile, isDeclarationFile, isTestFile, isTypeScriptFile, toPosix } from './paths.js';
 export { decideIgnoreStatic, excludedMutators, PRESETS, STRYKER_MUTATORS } from './presets.js';

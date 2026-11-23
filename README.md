@@ -3,7 +3,7 @@
 Checks the code a branch changed in a TypeScript project tested with Vitest. It answers two questions, limited to what the diff touched:
 
 - Do the tests catch bugs in the changed code? It mutates the changed lines with Stryker and reports the mutants the tests let through.
-- Does the changed code survive a dependency that stops answering? It holds every outgoing `fetch`, `http` and `https` request the changed code makes, as a server that accepts the connection and never replies, and reports calls that hang, mishandle the abort or are never awaited. This black hole is the only fault it injects.
+- Does the changed code survive a dependency that fails? It faults the outgoing `fetch`, `http` and `https` calls the changed code makes, one fault kind at a time, and reports calls that hang, mishandle the failure or are never awaited. The fault kinds are a server that never answers (the black hole), a 500 response, a 200 response whose JSON body is malformed, and a refused connection; see [Fault kinds](#fault-kinds).
 
 It runs within a fixed time budget and reports only what the diff touched.
 
@@ -77,6 +77,7 @@ The exit code is 0 whenever the plan could be computed, and 2 when it could not:
 | Static mutants (module-level constants) | skipped | skipped | tested when at most 20 lines are in scope |
 | Call sites faulted, at most | 3 | 8 | 20 |
 | Tests run per call site, at most | 1 | 2 | 3 |
+| Fault kinds, in run order | black hole | black hole, http-500 | black hole, http-500, malformed-json, connection refused |
 | Findings shown in the text report | 3 | 5 | 5 |
 
 The mutation phase runs first. The fault phase gets whatever budget is left, including time the mutation phase did not use. A phase with nothing in scope gives its whole share to the other one. Call sites and mutation batches are ordered by a severity prior based on file and function names (payments, auth, storage and similar), so the most sensitive code is checked first when the budget is tight.
@@ -156,7 +157,11 @@ Before any mutant runs, Stryker runs the tests related to the changed files with
 
 Stryker's Vitest runner reports no coverage at all when no test executes any mutant of a batch, and Stryker then runs every test against each mutant, which would report them as survivors. chimpd reports those mutants as `no-coverage` instead, unless one of the batch's mutants was killed, which would mean coverage collection itself failed.
 
-Fault phase, for each call site:
+## Fault kinds
+
+A fault only hits the call site it targets, and only while a selected test body runs. The same call made from a hook, at import time, from another test or from another site reaches the real server. The fault phase runs one fault kind at a time, in the order the preset lists them: every selected site gets the black hole first, then the next kind. A short budget therefore drops the later kinds before it drops black hole coverage of any site. Each site gets one result per fault kind. The cap on call sites counts sites, not runs. A site over the cap, or one no passing test reaches, is listed once as not faulted; a site and kind the budget cut off is listed with its kind.
+
+Black hole, for each call site:
 
 | Result | Meaning |
 | --- | --- |
@@ -166,6 +171,35 @@ Fault phase, for each call site:
 | `fire-and-forget` (finding, base 40) | The test passed while the request was still pending; nothing waits for it. |
 | handled | The call's timeout fired and the test passed. Counted as checked. |
 | inconclusive | No reliable verdict; listed with the reason. |
+
+HTTP 500: each call to the site gets a `500 Internal Server Error` response with the short body `Internal Server Error`. chimpd watches the response the code receives: for `fetch`, reads of `ok`, `status` and `statusText`, and of the body through `json`, `text`, `arrayBuffer`, `blob`, `formData`, `bytes` or `body`; for `http`, reads of `statusCode` and `statusMessage`, and of the body through a `data` or `readable` listener, `pipe` or async iteration. Discarding the body with `resume()` does not count as reading it.
+
+| Result | Meaning |
+| --- | --- |
+| `error-status-ignored` (finding, base 60) | The code read the body of the 500 response before it checked the status, so it treated the error as a success. |
+| `error-status-mishandled` (finding, base 55) | The status was checked or the response left alone, but the test failed or an unhandled rejection or error event escaped. |
+| handled | The code checked the status, or did not use the response at all, and the test passed. |
+| inconclusive | No call got the response, or the response never reached the code; listed with the reason. |
+
+Malformed JSON: each call to the site gets a `200` response with `content-type: application/json` and the body `{"chimpd-malformed-json":`, which no JSON parser accepts. chimpd counts a parse when `JSON.parse` is handed exactly that body, which covers `response.json()`, `JSON.parse(await response.text())` and an `http` body parsed by hand.
+
+| Result | Meaning |
+| --- | --- |
+| `malformed-json-mishandled` (finding, base 50) | The code parsed the body, and the test failed or the parse error escaped as an unhandled rejection or error event. |
+| handled | The code parsed the body, caught the parse error and the test passed. |
+| inconclusive | The code never parsed the body as JSON, so this kind does not apply to the site; or no call got the body. Never handled. |
+
+Connection refused: each call to the site fails as it does when nothing listens on the port. `fetch` rejects with `TypeError: fetch failed` whose cause is an `ECONNREFUSED` error, and an `http` request emits an `error` event with that code, errno and syscall. Each call is refused, so a retry is refused again, and the number of attempts is part of the reason.
+
+| Result | Meaning |
+| --- | --- |
+| `refusal-mishandled` (finding, base 60) | The test failed, an unhandled rejection or error event escaped, or the request had no error listener, so the error never reached the caller. |
+| handled | The error reached the caller and the test passed. |
+| inconclusive | No call was refused, or no reliable verdict; listed with the reason. |
+
+A test that never reaches the site, a call that escapes the scoped fault, a test process that dies, and a test whose hook or setup fails before its body runs are inconclusive for every kind. The last one is reported as "the test failed before its body ran" with the first line of the error.
+
+Fault phase budget: the black hole waits up to the fault deadline (2 s) per site; the other kinds answer at once, so a run costs the test itself plus Vitest's start. Before each run the remaining budget must cover the tests' unfaulted durations plus the deadline, for every kind, because a call that retries forever runs until it.
 
 Call sites are found by running the tests, so a call no test makes would leave no trace. To close that gap, chimpd also reads the changed code for direct calls to `fetch` (also as `globalThis.fetch`), `http.request`, `http.get`, `https.request` and `https.get`, under any import style. Each one the tests never reached is listed as not checked: "changed call to fetch at src/a.ts:12 is not reached by any test". Calls through a client library such as axios are not read from the source; they are faulted when a test makes them.
 
@@ -213,7 +247,8 @@ Gaps that make a run partial include call sites over the preset cap, a budget th
 
 - Vitest and TypeScript only.
 - Under the `happy-dom` environment the fault phase is inconclusive: happy-dom replaces `fetch` and `Request` with its own, which chimpd cannot fault yet. Custom environments that replace them are reported as a patch.
-- The only fault is the black hole (a server that never answers). Error responses, malformed bodies and refused connections are not injected yet, although the presets already name them.
+- Under `malformed-json`, a parse is seen through the global `JSON.parse`. A parser that does not go through it, such as a streaming JSON library, leaves the site inconclusive.
+- Under `http-500`, a status read counts once it happens; a body read before it makes the finding even when the status is checked later. A body read with `read()` alone, without a `readable` listener, is not seen. What the code does with the response after its test body ended is not seen.
 - A test file that replaces `fetch` or the `http` entry points itself, for example with a mock library, prevents faulting for the calls made under it. It is reported as a conflict.
 - Concurrent tests that reach the same call site are inconclusive, because a held request cannot be attributed to one of them.
 - The first call made after the fault deadline has released a test is inconclusive.

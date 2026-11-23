@@ -38,14 +38,14 @@ export function selectCallSites(sites: readonly CallSite[], limits: SelectionLim
   for (const site of sites.toSorted(bySeverity)) {
     if (site.reachedBy.length > 0) reachable.push(site);
     else if (site.unattributedCalls > 0) unattributable.push(site);
-    else skipped.push({ site, reason: 'no-passing-test' });
+    else skipped.push({ site, kind: null, reason: 'no-passing-test' });
   }
 
   const planned = reachable.slice(0, limits.maxFaultedCallSites).map((site) => ({
     site,
     tests: site.reachedBy.toSorted(byCost).slice(0, limits.testsPerCallSite),
   }));
-  for (const site of reachable.slice(limits.maxFaultedCallSites)) skipped.push({ site, reason: 'over-cap' });
+  for (const site of reachable.slice(limits.maxFaultedCallSites)) skipped.push({ site, kind: null, reason: 'over-cap' });
 
   return { planned, unattributable, skipped };
 }

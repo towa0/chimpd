@@ -1,4 +1,4 @@
-export { DEFAULT_TEST_DEADLINE_MS, runFaults } from './run.js';
+export { DEFAULT_TEST_DEADLINE_MS, isRunnableKind, runFaults } from './run.js';
 export type { FaultRunRequest } from './run.js';
 export { discoverCallSites } from './discover.js';
 export type { DiscoveryRequest } from './discover.js';

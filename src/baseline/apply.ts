@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { rangeForLine, type MutantRecord, type ScopeRange } from '../core/index.js';
+import { FINDING_FAULT_KIND, rangeForLine, type MutantRecord, type ScopeRange } from '../core/index.js';
 import type { CallSiteResult } from '../fault-run/index.js';
 import type { Finding, IgnoredFinding } from '../orchestrator/types.js';
 import { severityOf } from '../severity/index.js';
@@ -137,7 +137,11 @@ function mutationVerdict(entry: BaselineEntry & { source: 'mutation' }, file: st
 
 function faultVerdict(entry: BaselineEntry & { source: 'fault' }, file: string, input: IgnoreInput): Verdict {
   const faulted = input.faulted.filter(
-    (result) => result.site.file === file && result.site.functionName === entry.function && result.verdict !== 'inconclusive',
+    (result) =>
+      result.kind === FINDING_FAULT_KIND[entry.kind] &&
+      result.site.file === file &&
+      result.site.functionName === entry.function &&
+      result.verdict !== 'inconclusive',
   );
   return faulted.length > 0 && faulted.every((result) => result.findingKind !== entry.kind) ? 'stale' : 'untouched';
 }

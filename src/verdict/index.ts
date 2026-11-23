@@ -1,4 +1,11 @@
-import type { BlackHoleObservation, BlackHoleVerdict } from '../core/index.js';
+import type { BlackHoleObservation, BlackHoleVerdict, InjectedObservation, InjectedVerdict } from '../core/index.js';
+import { classifyRefused } from './refused.js';
+import { classifyMalformedJson } from './malformed-json.js';
+import { classifyServerError } from './server-error.js';
+
+export { classifyRefused } from './refused.js';
+export { classifyMalformedJson } from './malformed-json.js';
+export { classifyServerError } from './server-error.js';
 
 function knownDeadlineMs(observation: BlackHoleObservation): number | null {
   const candidates = [observation.signalDeadlineMs, observation.socketTimeoutMs].filter(
@@ -93,4 +100,15 @@ export function classifyBlackHole(observation: BlackHoleObservation): BlackHoleV
     deadlineMs: null,
     reason: 'the test passed while the request was still pending',
   };
+}
+
+export function classifyInjected(observation: InjectedObservation): InjectedVerdict {
+  switch (observation.kind) {
+    case 'connection-refused':
+      return classifyRefused(observation);
+    case 'http-500':
+      return classifyServerError(observation);
+    case 'malformed-json':
+      return classifyMalformedJson(observation);
+  }
 }

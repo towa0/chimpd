@@ -108,11 +108,22 @@ function keepIdentity<T extends Callable>(wrapper: Callable, original: T): T {
 
 type OnCall = ((metadata: CallMetadata) => void) | undefined;
 
-function wrapFetch(original: typeof fetch, onCall: OnCall): typeof fetch {
+/** Sees the response of each call it watches, before the caller does. */
+export interface ResponseHooks {
+  readonly watches: (metadata: CallMetadata) => boolean;
+  readonly onResponse: (metadata: CallMetadata, response: Response | http.IncomingMessage) => void;
+}
+
+function wrapFetch(original: typeof fetch, onCall: OnCall, responses: ResponseHooks | undefined): typeof fetch {
   const wrapper = function (this: unknown, ...args: unknown[]): Promise<Response> {
     const metadata = captureFetch(args[0], args[1], wrapper);
     onCall?.(metadata);
-    return fetchCalls.run(metadata, () => Reflect.apply(original, this, args) as Promise<Response>);
+    const pending = fetchCalls.run(metadata, () => Reflect.apply(original, this, args) as Promise<Response>);
+    if (responses === undefined || !responses.watches(metadata)) return pending;
+    return pending.then((response) => {
+      responses.onResponse(metadata, response);
+      return response;
+    });
   };
   return keepIdentity(wrapper, original);
 }
@@ -142,6 +153,7 @@ interface HttpCallHooks {
   readonly onCall: OnCall;
   readonly needsFreshConnection: ((metadata: CallMetadata) => boolean) | undefined;
   readonly defaultAgent: () => http.Agent;
+  readonly responses: ResponseHooks | undefined;
 }
 
 function wrapHttpCall<T extends typeof http.request>(original: T, hooks: HttpCallHooks): T {
@@ -151,6 +163,10 @@ function wrapHttpCall<T extends typeof http.request>(original: T, hooks: HttpCal
     if (hooks.needsFreshConnection?.(metadata) === true) closeIdleSockets(args, hooks.defaultAgent());
     const request = openingCalls.run(metadata, () => Reflect.apply(original, this, args) as http.ClientRequest);
     httpCalls.set(request, metadata);
+    const { responses } = hooks;
+    if (responses?.watches(metadata) === true) {
+      request.prependListener('response', (message: http.IncomingMessage) => responses.onResponse(metadata, message));
+    }
     return request;
   };
   return keepIdentity(wrapper, original);
@@ -211,12 +227,13 @@ export interface CallCaptureOptions {
   readonly onCall?: (metadata: CallMetadata) => void;
   /** Calls for which an http request must open its own connection instead of reusing an idle one. */
   readonly needsFreshConnection?: (metadata: CallMetadata) => boolean;
+  readonly responses?: ResponseHooks;
 }
 
 export function installCallCapture(options: CallCaptureOptions = {}): CallCapture {
-  const { onCall, needsFreshConnection } = options;
-  const plain: HttpCallHooks = { onCall, needsFreshConnection, defaultAgent: () => http.globalAgent };
-  const secure: HttpCallHooks = { onCall, needsFreshConnection, defaultAgent: () => https.globalAgent };
+  const { onCall, needsFreshConnection, responses } = options;
+  const plain: HttpCallHooks = { onCall, needsFreshConnection, defaultAgent: () => http.globalAgent, responses };
+  const secure: HttpCallHooks = { onCall, needsFreshConnection, defaultAgent: () => https.globalAgent, responses };
   const original = {
     fetch: globalThis.fetch,
     Request: globalThis.Request,
@@ -229,7 +246,7 @@ export function installCallCapture(options: CallCaptureOptions = {}): CallCaptur
     signalAny: detach(AbortSignal, 'any'),
   };
   const wrappers = {
-    fetch: wrapFetch(original.fetch, onCall),
+    fetch: wrapFetch(original.fetch, onCall, responses),
     httpRequest: wrapHttpCall(original.httpRequest, plain),
     httpGet: wrapHttpCall(original.httpGet, plain),
     httpsRequest: wrapHttpCall(original.httpsRequest, secure),

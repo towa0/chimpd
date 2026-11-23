@@ -38,7 +38,7 @@ async function runSuite(dir: string): Promise<Outcome> {
 
 it('passes its own suite at the base commit', async () => {
   app = createSampleApp();
-  expect(await runSuite(app.dir)).toEqual({ files: 9, failed: 0, unhandled: 0 });
+  expect(await runSuite(app.dir)).toEqual({ files: 11, failed: 0, unhandled: 0 });
 });
 
 it('still passes after every scripted commit', async () => {
@@ -46,5 +46,6 @@ it('still passes after every scripted commit', async () => {
   history.boundaryChange(app);
   history.staticChange(app);
   history.weakTest(app);
-  expect(await runSuite(app.dir)).toEqual({ files: 10, failed: 0, unhandled: 0 });
+  history.faultKindChanges(app);
+  expect(await runSuite(app.dir)).toEqual({ files: 12, failed: 0, unhandled: 0 });
 });

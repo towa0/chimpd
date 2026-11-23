@@ -82,7 +82,11 @@ export type FaultFindingKind =
   | 'abort-mishandled'
   | 'hang-no-timeout'
   | 'timeout-exceeds-budget'
-  | 'fire-and-forget';
+  | 'fire-and-forget'
+  | 'refusal-mishandled'
+  | 'error-status-ignored'
+  | 'error-status-mishandled'
+  | 'malformed-json-mishandled';
 
 export interface BlackHoleVerdict {
   readonly verdict: BlackHoleVerdictKind;
@@ -92,3 +96,51 @@ export interface BlackHoleVerdict {
   readonly deadlineMs: number | null;
   readonly reason: string;
 }
+
+/** The fault kinds that answer a call at once, where the black hole holds it. */
+export type InjectedFaultKind = Exclude<FaultKind, 'blackhole'>;
+
+/** What the code did with a faulted response, over every attempt. */
+export interface ResponseUse {
+  /** Whether the code read ok, status or statusText, or statusCode or statusMessage for http. */
+  readonly statusRead: boolean;
+  /** Whether the code read the body: json, text and the like for fetch, its data or stream for http. */
+  readonly bodyConsumed: boolean;
+  /** Whether a body was consumed before the status of its response was read, if it was read at all. */
+  readonly bodyBeforeStatus: boolean;
+}
+
+/** One test body under a fault that answers at once, over every call it made to the site. */
+export interface InjectedObservation {
+  readonly kind: InjectedFaultKind;
+  /** Calls the body made to the site; more than one means the code tried again. */
+  readonly attempts: number;
+  /** false when an http request had no error listener, so its error could not reach the caller. */
+  readonly errorReachedCaller: boolean;
+  readonly testOutcome: TestOutcome;
+  readonly errorEscaped: boolean;
+  /** For a fault that answers with a response; null when there is none, or none reached the code. */
+  readonly response: ResponseUse | null;
+  /** Whether the code parsed the faulted body as JSON; null when the fault kind does not watch parsing. */
+  readonly jsonParsed: boolean | null;
+}
+
+export type InjectedVerdictKind =
+  | 'refusal-handled'
+  | 'refusal-mishandled'
+  | 'status-checked'
+  | 'response-unused'
+  | 'status-ignored'
+  | 'status-mishandled'
+  | 'parse-handled'
+  | 'parse-mishandled'
+  | 'inconclusive';
+
+export interface InjectedVerdict {
+  readonly verdict: InjectedVerdictKind;
+  readonly findingKind: FaultFindingKind | null;
+  readonly reason: string;
+}
+
+export type FaultVerdictKind = BlackHoleVerdictKind | InjectedVerdictKind;
+

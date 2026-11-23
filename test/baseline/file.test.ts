@@ -46,6 +46,11 @@ describe('parseBaseline', () => {
     expect(parseBaseline(baselineText({ version: 1, entries: [MUTATION, withoutReason] }))).toEqual([MUTATION, FAULT]);
   });
 
+  it('accepts every fault finding kind, the connection-refused one included', () => {
+    const refusal = { ...FAULT, kind: 'refusal-mishandled' };
+    expect(parseBaseline(baselineText({ version: 1, entries: [refusal] }))).toEqual([refusal]);
+  });
+
   it('round-trips through serializeBaseline, sorted by file', () => {
     const text = serializeBaseline([FAULT, MUTATION]);
     expect(parseBaseline(text)).toEqual([MUTATION, FAULT]);

@@ -1,5 +1,5 @@
 import type { BaselineEntry } from '../baseline/file.js';
-import type { BlackHoleVerdictKind, Intensity, MutantStatus } from '../core/index.js';
+import type { FaultKind, FaultVerdictKind, Intensity, MutantStatus } from '../core/index.js';
 import type { IgnoredFile, ScopeNote } from '../diff-scoper/index.js';
 import type { FileConflict } from '../fault-run/index.js';
 import type { FindingKind, Severity } from '../severity/index.js';
@@ -37,7 +37,8 @@ export interface MutationDetail {
 }
 
 export interface FaultDetail {
-  readonly verdict: BlackHoleVerdictKind;
+  readonly kind: FaultKind;
+  readonly verdict: FaultVerdictKind;
   readonly path: 'fetch' | 'http';
   readonly tests: readonly string[];
 }
@@ -63,6 +64,8 @@ export interface Item {
   /** null when the item is a whole file, such as one whose mutants were never planned. */
   readonly line: number | null;
   readonly reason: string;
+  /** The fault kind the item is about; absent when it applies to every kind or is not about a fault. */
+  readonly faultKind?: FaultKind;
 }
 
 export type ScopeModeName = 'diff' | 'test-only';

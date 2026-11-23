@@ -79,7 +79,7 @@ it('does not claim a connection opened in the context of a body that has ended',
     {
       eventsDir,
       pristine: await pristineFingerprints(),
-      mode: { kind: 'fault', targetRoot: repoRoot, siteKey: heldFetchSite(), testIds: [task.id], deadlineMs: 10_000 },
+      mode: { kind: 'fault', targetRoot: repoRoot, siteKey: heldFetchSite(), testIds: [task.id], deadlineMs: 10_000, faultKind: 'blackhole' },
     },
   );
   try {

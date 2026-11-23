@@ -1,4 +1,4 @@
-import { firstErrorLine, type MutantRecord, type Preset } from '../core/index.js';
+import { firstErrorLine, type FaultKind, type MutantRecord, type Preset } from '../core/index.js';
 import type { CallSite, FaultRunResult, SkipReason } from '../fault-run/index.js';
 import { mutationFindingKind, priorOf, severityOf } from '../severity/index.js';
 import type { MutationResult } from '../stryker-adapter/index.js';
@@ -106,16 +106,17 @@ function skipReason(reason: SkipReason, preset: Preset): string {
   return 'not faulted: no passing test makes this call';
 }
 
-function siteItem(site: CallSite, reason: string): Item {
-  return { source: 'fault', file: site.file, line: site.line, reason };
+function siteItem(site: CallSite, reason: string, kind: FaultKind | null): Item {
+  const item: Item = { source: 'fault', file: site.file, line: site.line, reason };
+  return kind === null ? item : { ...item, faultKind: kind };
 }
 
 export function faultItems(result: FaultRunResult, preset: Preset): PhaseItems {
   const findings: Finding[] = [];
   const inconclusive: Item[] = [];
-  let callSites = 0;
+  const decided = new Set<string>();
   for (const entry of result.results) {
-    if (entry.verdict !== 'inconclusive') callSites += 1;
+    if (entry.verdict !== 'inconclusive') decided.add(entry.site.key);
     const { site } = entry;
     if (entry.findingKind !== null) {
       findings.push({
@@ -129,15 +130,16 @@ export function faultItems(result: FaultRunResult, preset: Preset): PhaseItems {
         severity: severityOf(entry.findingKind, site.prior),
         mutation: null,
         fault: {
+          kind: entry.kind,
           verdict: entry.verdict,
           path: site.path,
           tests: entry.tests.map(({ test }) => `${test.file} > ${test.name}`),
         },
       });
     } else if (entry.verdict === 'inconclusive') {
-      inconclusive.push(siteItem(site, entry.reason));
+      inconclusive.push(siteItem(site, entry.reason, entry.kind));
     }
   }
-  const skipped = result.skipped.map(({ site, reason }) => siteItem(site, skipReason(reason, preset)));
-  return { checked: { ...NOTHING_CHECKED, callSites }, findings, invalid: [], skipped, inconclusive };
+  const skipped = result.skipped.map(({ site, kind, reason }) => siteItem(site, skipReason(reason, preset), kind));
+  return { checked: { ...NOTHING_CHECKED, callSites: decided.size }, findings, invalid: [], skipped, inconclusive };
 }

@@ -1,12 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { git, toPosix, type FaultFindingKind } from '../core/index.js';
+import { FAULT_FINDING_KINDS, git, toPosix, type FaultFindingKind } from '../core/index.js';
 import { ChimpdError } from '../orchestrator/target.js';
 
 export const BASELINE_FILE = 'chimpd-baseline.json';
 export const BASELINE_VERSION = 1;
-
-const FAULT_KINDS: readonly FaultFindingKind[] = ['abort-mishandled', 'hang-no-timeout', 'timeout-exceeds-budget', 'fire-and-forget'];
 
 export interface MutationEntry {
   readonly source: 'mutation';
@@ -85,8 +83,8 @@ function parseEntry(value: unknown, index: number, name: string): BaselineEntry 
     const fn = value.function;
     if (fn !== null && (typeof fn !== 'string' || fn === '')) throw new BaselineError(`${where}: "function" must be a non-empty string or null`);
     const kind = value.kind;
-    if (typeof kind !== 'string' || !(FAULT_KINDS as readonly string[]).includes(kind)) {
-      throw new BaselineError(`${where}: "kind" must be one of ${FAULT_KINDS.join(', ')}`);
+    if (typeof kind !== 'string' || !(FAULT_FINDING_KINDS as readonly string[]).includes(kind)) {
+      throw new BaselineError(`${where}: "kind" must be one of ${FAULT_FINDING_KINDS.join(', ')}`);
     }
     return { source: 'fault', file: text(value, 'file', where), function: fn, kind: kind as FaultFindingKind, reason: reasonOf(value, where) };
   }

@@ -11,12 +11,13 @@ import {
   rangeForLine,
   seedError,
   toPosix,
+  type FaultKind,
   type Preset,
   type ScopeKind,
   type ScopeRange,
 } from '../core/index.js';
 import { DEFAULT_BASE, findOutgoingCalls, scopeDiff, type DiffScope, type DiffScopeOptions, type OutgoingCallee } from '../diff-scoper/index.js';
-import { DEFAULT_TEST_DEADLINE_MS } from '../fault-run/index.js';
+import { DEFAULT_TEST_DEADLINE_MS, isRunnableKind } from '../fault-run/index.js';
 import {
   checkTarget,
   EXIT_CLEAN,
@@ -83,6 +84,8 @@ export interface PlanCall {
 
 export interface PlanFaults {
   readonly calls: readonly PlanCall[];
+  /** The fault kinds a run would use, in the order it would run them. */
+  readonly kinds: readonly FaultKind[];
   readonly maxCallSites: number;
   readonly testsPerCallSite: number;
   readonly notRun: string | null;
@@ -185,14 +188,19 @@ function estimateMutation(mutation: PlanMutation, ranges: readonly ScopeRange[],
 function estimateFaults(faults: PlanFaults, budgetMs: number): { ms: number; lines: string[] } {
   if (faults.notRun !== null) return { ms: 0, lines: ['faults: 0 s, the phase would not run'] };
   const sites = Math.min(faults.calls.length, faults.maxCallSites);
-  const perSiteMs = DEFAULT_TEST_DEADLINE_MS + faults.testsPerCallSite * ASSUMED_TEST_MS;
+  const testsMs = faults.testsPerCallSite * ASSUMED_TEST_MS;
+  const others = faults.kinds.filter((kind) => kind !== 'blackhole').length;
+  const perSiteMs = DEFAULT_TEST_DEADLINE_MS + testsMs + others * testsMs;
   const rawMs = ASSUMED_DISCOVERY_MS + sites * perSiteMs;
   const ms = Math.max(0, Math.min(rawMs, budgetMs));
   const capped = rawMs > budgetMs ? `, capped at the ${seconds(budgetMs)} left` : '';
+  const tests = `${plural(faults.testsPerCallSite, 'test')} x ${seconds(ASSUMED_TEST_MS)} assumed`;
+  const more = others === 0 ? '' : `, then ${tests} for each of ${others} more fault ${others === 1 ? 'kind' : 'kinds'}`;
   return {
     ms,
     lines: [
-      `faults: ${seconds(ASSUMED_DISCOVERY_MS)} assumed discovery run + ${plural(sites, 'call site')} found in the source x (${seconds(DEFAULT_TEST_DEADLINE_MS)} fault deadline + ${plural(faults.testsPerCallSite, 'test')} x ${seconds(ASSUMED_TEST_MS)} assumed) = ${seconds(rawMs)}${capped}`,
+      `faults: ${seconds(ASSUMED_DISCOVERY_MS)} assumed discovery run + ${plural(sites, 'call site')} found in the source x (${seconds(DEFAULT_TEST_DEADLINE_MS)} fault deadline + ${tests}${more}) = ${seconds(rawMs)}${capped}`,
+      `faults: ${plural(faults.kinds.length, 'fault kind')}, run kind by kind: ${faults.kinds.join(', ')}`,
       'faults: calls through client libraries are only found when a test makes them, so the real count can be higher',
     ],
   };
@@ -284,6 +292,7 @@ export async function planRun(options: PlanOptions): Promise<RunPlan> {
     : [];
   const faults: PlanFaults = {
     calls,
+    kinds: preset.faultKinds.filter(isRunnableKind),
     maxCallSites: preset.maxFaultedCallSites,
     testsPerCallSite: preset.testsPerCallSite,
     notRun: faultsInScope ? null : planned.scope.mode === 'test-only' ? TEST_ONLY_NO_FAULTS : 'no TypeScript source in scope to fault',

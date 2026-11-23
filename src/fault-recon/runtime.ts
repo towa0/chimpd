@@ -10,7 +10,8 @@ import { installCallCapture, type CallMetadata } from '../fault-injector/call-ca
 import { installBlackHole } from '../fault-injector/interception.js';
 import { callSiteKey, parseStack, projectFrames } from './call-site.js';
 import { createPatchGuard, patchedSince, testEnvironmentName } from './conflicts.js';
-import type { FaultMode, HeldObservation, RuntimeConfig, RuntimeEvent } from './protocol.js';
+import { startInjection } from './inject-session.js';
+import type { FaultMode, HeldObservation, InjectedCall, RuntimeConfig, RuntimeEvent } from './protocol.js';
 
 export interface RunnerTask {
   readonly id: string;
@@ -29,17 +30,19 @@ export interface RuntimeHooks {
   getTestFn(task: RunnerTask): (() => unknown) | undefined;
 }
 
-interface TestBody {
+export interface TestBody {
   readonly testId: string;
   readonly testFile: string;
 }
 
-interface BodyReport {
+export interface BodyReport {
   readonly targetedCalls: number;
   readonly observations: readonly HeldObservation[];
+  readonly injections?: readonly InjectedCall[];
+  readonly jsonParsed?: boolean;
 }
 
-interface Session {
+export interface Session {
   includes(task: RunnerTask): boolean;
   begin(current: TestBody): void;
   end(current: TestBody): BodyReport | Promise<BodyReport>;
@@ -166,7 +169,13 @@ export function startRuntime(hooks: RuntimeHooks, config: RuntimeConfig): void {
     return;
   }
 
-  const session = config.mode.kind === 'recon' ? startRecon(write) : startFault(config.mode);
+  const { mode } = config;
+  const session =
+    mode.kind === 'recon'
+      ? startRecon(write)
+      : mode.faultKind === 'blackhole'
+        ? startFault(mode)
+        : startInjection(mode, () => body.getStore());
   const guard = createPatchGuard(config.pristine);
 
   async function runBody(current: TestBody, fn: () => unknown): Promise<unknown> {

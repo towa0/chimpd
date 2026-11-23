@@ -21,7 +21,7 @@ describe('text report', () => {
         'Findings, most severe first:',
         '  1. [high 70] src/clients/ledger.ts:12:20 in postLedgerEntry',
         '    hang-no-timeout: the call has no timeout of its own and relies on runtime transport defaults',
-        '    faulted under: test/ledger.test.ts > posts a ledger entry',
+        '    faulted with blackhole under: test/ledger.test.ts > posts a ledger entry',
         '  2. [medium 55] src/discount.ts:3:7',
         '    survived: EqualityOperator mutant survived every test that covers it: orderTotal > 120',
         '',
@@ -335,3 +335,27 @@ describe('ignored findings in the text report', () => {
     expect(renderText(runResult())).not.toContain('ignored');
   });
 });
+
+describe('fault kinds in the text report', () => {
+  it('names the fault kind of a finding, an inconclusive site and a skipped one', () => {
+    const text = renderText(
+      runResult({
+        status: 'partial',
+        findings: [
+          faultFinding({
+            kind: 'refusal-mishandled',
+            message: 'the test failed after the connection was refused',
+            fault: { kind: 'connection-refused', verdict: 'refusal-mishandled', path: 'fetch', tests: ['test/a.test.ts > loads'] },
+          }),
+        ],
+        inconclusive: [{ source: 'fault', file: 'src/a.ts', line: 9, reason: 'the test did not reach the call site under the fault', faultKind: 'connection-refused' }],
+        skipped: [{ source: 'fault', file: 'src/b.ts', line: 3, reason: 'not faulted: the budget ran out first', faultKind: 'blackhole' }],
+      }),
+    );
+    expect(text).toContain('    refusal-mishandled: the test failed after the connection was refused');
+    expect(text).toContain('    faulted with connection-refused under: test/a.test.ts > loads');
+    expect(text).toContain('  src/a.ts:9 fault (connection-refused): the test did not reach the call site under the fault');
+    expect(text).toContain('  fault (blackhole): not faulted: the budget ran out first (1 item)');
+  });
+});
+

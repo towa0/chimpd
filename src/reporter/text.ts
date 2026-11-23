@@ -114,8 +114,9 @@ function findingLines(finding: Finding, rank: number): string[] {
     `${INDENT}${rank}. [${severity.level} ${severity.score}] ${where}${name}`,
     `${INDENT}${INDENT}${finding.kind}: ${finding.message}`,
   ];
-  if (finding.fault !== null && finding.fault.tests.length > 0) {
-    lines.push(`${INDENT}${INDENT}faulted under: ${finding.fault.tests.join('; ')}`);
+  if (finding.fault !== null) {
+    const under = finding.fault.tests.length > 0 ? ` under: ${finding.fault.tests.join('; ')}` : '';
+    lines.push(`${INDENT}${INDENT}faulted with ${finding.fault.kind}${under}`);
   }
   return lines;
 }
@@ -173,11 +174,15 @@ function groupedSection(title: string, items: readonly Item[], label: (entry: It
   return lines;
 }
 
+function sourceOf(entry: Item): string {
+  return entry.faultKind === undefined ? entry.source : `${entry.source} (${entry.faultKind})`;
+}
+
 function inconclusiveSection(items: readonly Item[]): string[] {
   if (items.length === 0) return [];
   return [
     `Inconclusive (${items.length}):`,
-    ...items.map((entry) => `${INDENT}${location(entry.file, entry.line)} ${entry.source}: ${firstLine(entry.reason)}`),
+    ...items.map((entry) => `${INDENT}${location(entry.file, entry.line)} ${sourceOf(entry)}: ${firstLine(entry.reason)}`),
   ];
 }
 
@@ -211,7 +216,7 @@ export function renderText(result: RunResult, options: ExitOptions = {}): string
     findingsSection(result, shown),
     ignoredSection(result),
     baselineSection(result),
-    groupedSection('Skipped', result.skipped, (entry) => `${entry.source}: ${entry.reason}`),
+    groupedSection('Skipped', result.skipped, (entry) => `${sourceOf(entry)}: ${entry.reason}`),
     inconclusiveSection(result.inconclusive),
     conflictSection(result),
     phaseSection(result),

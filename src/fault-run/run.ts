@@ -1,5 +1,6 @@
 import fs from 'node:fs';
-import { PRESETS, realNow, startBudget, type Intensity, type ScopeRange } from '../core/index.js';
+import { PRESETS, realNow, startBudget, type FaultKind, type Intensity, type ScopeRange } from '../core/index.js';
+import { INJECTORS } from '../fault-injector/injectors.js';
 import { pristineFingerprints } from '../fault-recon/conflicts.js';
 import type { VitestNodeModule } from '../fault-recon/index.js';
 import { combineSite, inconclusiveSite } from './combine.js';
@@ -29,6 +30,11 @@ export const DEFAULT_TEST_DEADLINE_MS = 2000;
 
 const OUTSIDE_TEST_BODY = 'every call to this site was made outside a test body, at import time or from a hook';
 
+/** Whether chimpd can inject this fault kind; a preset may list kinds it cannot inject yet. */
+export function isRunnableKind(kind: FaultKind): boolean {
+  return kind === 'blackhole' || INJECTORS[kind] !== undefined;
+}
+
 export async function runFaults(request: FaultRunRequest): Promise<FaultRunResult> {
   const budget = startBudget(request.budgetMs, request.now ?? realNow);
   const deadlineMs = request.testDeadlineMs ?? DEFAULT_TEST_DEADLINE_MS;
@@ -56,28 +62,35 @@ export async function runFaults(request: FaultRunRequest): Promise<FaultRunResul
     };
   }
 
-  const selection = selectCallSites(discovery.sites, PRESETS[request.intensity], request.seed);
+  const preset = PRESETS[request.intensity];
+  const kinds = preset.faultKinds.filter(isRunnableKind);
+  const selection = selectCallSites(discovery.sites, preset, request.seed);
   const results: CallSiteResult[] = [];
   const skipped: SkippedCallSite[] = [...selection.skipped];
   let outOfBudget = false;
 
-  for (const { site, tests } of selection.planned) {
-    const remainingMs = budget.remainingMs();
-    const neededMs = tests.reduce((total, test) => total + test.durationMs, 0) + deadlineMs;
-    if (outOfBudget || remainingMs < neededMs) {
-      outOfBudget = true;
-      skipped.push({ site, reason: 'budget' });
-      continue;
-    }
-    const run = await runFaultedSite({ ...shared, site, tests, deadlineMs, timeoutMs: remainingMs });
-    if (run.killed) {
-      outOfBudget = true;
-      skipped.push({ site, reason: 'budget' });
-    } else {
-      results.push(combineSite(site, run.tests));
+  // Kind by kind, so a short budget drops the later kinds before it drops black hole coverage of any site.
+  for (const kind of kinds) {
+    for (const { site, tests } of selection.planned) {
+      const remainingMs = budget.remainingMs();
+      const neededMs = tests.reduce((total, test) => total + test.durationMs, 0) + deadlineMs;
+      if (outOfBudget || remainingMs < neededMs) {
+        outOfBudget = true;
+        skipped.push({ site, kind, reason: 'budget' });
+        continue;
+      }
+      const run = await runFaultedSite({ ...shared, site, tests, deadlineMs, kind, timeoutMs: remainingMs });
+      if (run.killed) {
+        outOfBudget = true;
+        skipped.push({ site, kind, reason: 'budget' });
+      } else {
+        results.push(combineSite(site, run.tests, kind));
+      }
     }
   }
-  for (const site of selection.unattributable) results.push(inconclusiveSite(site, OUTSIDE_TEST_BODY));
+  for (const kind of kinds) {
+    for (const site of selection.unattributable) results.push(inconclusiveSite(site, OUTSIDE_TEST_BODY, kind));
+  }
 
   return {
     status: outOfBudget ? 'budget-exhausted' : 'completed',

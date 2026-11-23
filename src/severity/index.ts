@@ -25,11 +25,15 @@ export interface Severity {
 export const BASE_SCORES: Readonly<Record<FindingKind, number>> = {
   'hang-no-timeout': 70,
   'abort-mishandled': 65,
+  'refusal-mishandled': 60,
   survived: 55,
   'timeout-exceeds-budget': 50,
   'no-coverage': 45,
   'fire-and-forget': 40,
   'invalid-ignore': 50,
+  'error-status-ignored': 60,
+  'error-status-mishandled': 55,
+  'malformed-json-mishandled': 50,
 };
 
 export const HIGH_SEVERITY = 70;

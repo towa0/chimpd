@@ -20,11 +20,29 @@ const fields = (shape: Readonly<Record<string, Shape>>): Shape => ({ fields: sha
 const oneOf = (...values: string[]): Shape => ({ oneOf: values });
 const anyOf = (...shapes: Shape[]): Shape => ({ anyOf: shapes });
 
-const ITEM = fields({ source: oneOf('mutation', 'fault'), file: 'string', line: nullable('number'), reason: 'string' });
+const ITEM = fields({
+  source: oneOf('mutation', 'fault'),
+  file: 'string',
+  line: nullable('number'),
+  reason: 'string',
+  faultKind: nullable(oneOf('blackhole', 'http-500', 'malformed-json', 'connection-refused')),
+});
 
 const FINDING_FIELDS: Readonly<Record<string, Shape>> = {
   source: oneOf('mutation', 'fault'),
-  kind: oneOf('survived', 'no-coverage', 'hang-no-timeout', 'abort-mishandled', 'timeout-exceeds-budget', 'fire-and-forget', 'invalid-ignore'),
+  kind: oneOf(
+    'survived',
+    'no-coverage',
+    'hang-no-timeout',
+    'abort-mishandled',
+    'timeout-exceeds-budget',
+    'fire-and-forget',
+    'invalid-ignore',
+    'refusal-mishandled',
+    'error-status-ignored',
+    'error-status-mishandled',
+    'malformed-json-mishandled',
+  ),
   file: 'string',
   line: 'number',
   column: 'number',
@@ -42,7 +60,9 @@ const FINDING_FIELDS: Readonly<Record<string, Shape>> = {
       statement: nullable('string'),
     }),
   ),
-  fault: nullable(fields({ verdict: 'string', path: oneOf('fetch', 'http'), tests: list('string') })),
+  fault: nullable(
+    fields({ kind: oneOf('blackhole', 'http-500', 'malformed-json', 'connection-refused'), verdict: 'string', path: oneOf('fetch', 'http'), tests: list('string') }),
+  ),
 };
 
 const BASELINE_ENTRY = anyOf(
@@ -137,7 +157,7 @@ const full = runResult({
   },
   findings: [faultFinding(), mutationFinding({ kind: 'no-coverage', severity: severityOf('no-coverage', 10) })],
   skipped: [{ source: 'mutation', file: 'src/a.ts', line: null, reason: 'mutants never planned: the budget ran out first' }],
-  inconclusive: [{ source: 'fault', file: 'src/a.ts', line: 9, reason: 'the test did not reach the call site under the fault' }],
+  inconclusive: [{ source: 'fault', file: 'src/a.ts', line: 9, reason: 'the test did not reach the call site under the fault', faultKind: 'connection-refused' }],
   conflicts: [{ testFile: 'test/n.test.ts', patched: ['fetch'] }],
   invalid: [{ source: 'mutation', file: 'src/a.ts', line: 6, reason: 'compile error: src/a.ts(6,3): error TS2322: Type mismatch.' }],
   ignored: [
@@ -192,9 +212,9 @@ describe('JSON report schema', () => {
   it('lists what was checked and every gap in the coverage section', () => {
     expect(toJsonReport(full).coverage).toEqual({
       checked: { mutants: 12, invalidMutants: 0, callSites: 3 },
-      invalid: [{ source: 'mutation', file: 'src/a.ts', line: 6, reason: 'compile error: src/a.ts(6,3): error TS2322: Type mismatch.' }],
-      skipped: [{ source: 'mutation', file: 'src/a.ts', line: null, reason: 'mutants never planned: the budget ran out first' }],
-      inconclusive: [{ source: 'fault', file: 'src/a.ts', line: 9, reason: 'the test did not reach the call site under the fault' }],
+      invalid: [{ source: 'mutation', file: 'src/a.ts', line: 6, reason: 'compile error: src/a.ts(6,3): error TS2322: Type mismatch.', faultKind: null }],
+      skipped: [{ source: 'mutation', file: 'src/a.ts', line: null, reason: 'mutants never planned: the budget ran out first', faultKind: null }],
+      inconclusive: [{ source: 'fault', file: 'src/a.ts', line: 9, reason: 'the test did not reach the call site under the fault', faultKind: 'connection-refused' }],
       conflicts: [{ testFile: 'test/n.test.ts', patched: ['fetch'] }],
     });
   });
@@ -205,7 +225,7 @@ describe('JSON report schema', () => {
       ['hang-no-timeout', 70],
       ['no-coverage', 55],
     ]);
-    expect(report.findings[0]?.fault).toEqual({ verdict: 'hang', path: 'http', tests: ['test/ledger.test.ts > posts a ledger entry'] });
+    expect(report.findings[0]?.fault).toEqual({ kind: 'blackhole', verdict: 'hang', path: 'http', tests: ['test/ledger.test.ts > posts a ledger entry'] });
     expect(report.findings[1]?.mutation).toMatchObject({ replacement: 'orderTotal > 120', coveredBy: ['test/discount.test.ts#applies'] });
   });
 

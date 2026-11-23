@@ -6,7 +6,7 @@ import * as vitestNode from 'vitest/node';
 import { PRESETS, type Intensity } from '../../src/core/index.js';
 import { scopeDiff } from '../../src/diff-scoper/index.js';
 import { pristineFingerprints } from '../../src/fault-recon/conflicts.js';
-import { runFaults, type CallSiteResult, type FaultRunResult } from '../../src/fault-run/index.js';
+import { isRunnableKind, runFaults, type CallSiteResult, type FaultRunResult } from '../../src/fault-run/index.js';
 import { runInstrumented } from '../../src/fault-run/instrumented.js';
 import { selectCallSites } from '../../src/fault-run/select.js';
 import { addPairModule } from '../helpers/fault-fixtures.js';
@@ -59,22 +59,36 @@ describe('fault run on the sample app', () => {
     'gives one verdict per changed call site',
     async () => {
       const result = await run(app, { intensity: 2 });
+      const held = result.results.filter((entry) => entry.kind === 'blackhole');
+      const serverError = result.results.filter((entry) => entry.kind === 'http-500');
 
       expect(result.status).toBe('completed');
       expect(result.statusReason).toBeNull();
-      expect(verdicts(result.results)).toEqual({
+      expect(verdicts(held)).toEqual({
         'src/clients/inventory.ts checkStock': 'handled-timeout',
         'src/clients/ledger.ts postLedgerEntry': 'hang',
         'src/clients/profile.ts fetchProfile': 'hang',
         'src/telemetry.ts trackEvent': 'detached',
       });
-      expect(result.results.map((entry) => entry.findingKind)).toEqual([
+      expect(held.map((entry) => entry.findingKind)).toEqual([
         null,
         'hang-no-timeout',
         'hang-no-timeout',
         'fire-and-forget',
       ]);
-      expect(result.results.map((entry) => entry.tests.map(({ test }) => test.name))).toEqual([
+      expect(verdicts(serverError)).toEqual({
+        'src/clients/inventory.ts checkStock': 'status-ignored',
+        'src/clients/ledger.ts postLedgerEntry': 'status-mishandled',
+        'src/clients/profile.ts fetchProfile': 'status-mishandled',
+        'src/telemetry.ts trackEvent': 'response-unused',
+      });
+      expect(serverError.map((entry) => entry.findingKind)).toEqual([
+        'error-status-ignored',
+        'error-status-mishandled',
+        'error-status-mishandled',
+        null,
+      ]);
+      expect(held.map((entry) => entry.tests.map(({ test }) => test.name))).toEqual([
         ['renders a product page for the requested sku'],
         ['posts a ledger entry'],
         ['loads a profile'],
@@ -105,10 +119,33 @@ describe('fault run on the sample app', () => {
   );
 
   it(
+    'runs every kind on every selected site, kind by kind in the order the preset lists them',
+    async () => {
+      const result = await run(app, { intensity: 3 });
+      const kinds = PRESETS[3].faultKinds.filter(isRunnableKind);
+      expect(kinds.slice(0, 1)).toEqual(['blackhole']);
+      expect(kinds).toContain('connection-refused');
+      const sites = [...new Set(result.results.map((entry) => entry.site.key))];
+      expect(sites).toHaveLength(4);
+      expect(result.results.map((entry) => [entry.kind, entry.site.key])).toEqual(kinds.flatMap((kind) => sites.map((key) => [kind, key])));
+      const refused = result.results.filter((entry) => entry.kind === 'connection-refused');
+      expect(verdicts(refused)).toEqual({
+        'src/clients/inventory.ts checkStock': 'refusal-handled',
+        'src/clients/ledger.ts postLedgerEntry': 'refusal-mishandled',
+        'src/clients/profile.ts fetchProfile': 'refusal-mishandled',
+        'src/telemetry.ts trackEvent': 'refusal-handled',
+      });
+      expect(refused.map((entry) => entry.findingKind)).toEqual([null, 'refusal-mishandled', 'refusal-mishandled', null]);
+      expect(result.status).toBe('completed');
+    },
+    TIMEOUT_MS * 2,
+  );
+
+  it(
     'lets the seed pick among call sites of equal severity over the cap',
     async () => {
       const all = await run(app, { intensity: 2 });
-      const sites = all.results.map((entry) => entry.site);
+      const sites = all.results.filter((entry) => entry.kind === 'blackhole').map((entry) => entry.site);
       const expected = (seed: number) => selectCallSites(sites, PRESETS[1], seed);
       const seed = Array.from({ length: 50 }, (_, index) => index).find(
         (candidate) => expected(candidate).skipped.map(({ site }) => site.file).join() !== 'src/telemetry.ts',
@@ -138,9 +175,12 @@ describe('fault run on the sample app', () => {
         'src/clients/inventory.ts checkStock': 'handled-timeout',
         'src/clients/ledger.ts postLedgerEntry': 'hang',
       });
-      expect(result.skipped.map((entry) => [entry.site.file, entry.reason])).toEqual([
-        ['src/clients/profile.ts', 'budget'],
-        ['src/telemetry.ts', 'budget'],
+      const later = PRESETS[2].faultKinds.filter(isRunnableKind).slice(1);
+      const sites = ['src/clients/inventory.ts', 'src/clients/ledger.ts', 'src/clients/profile.ts', 'src/telemetry.ts'];
+      expect(result.skipped.map((entry) => [entry.site.file, entry.kind, entry.reason])).toEqual([
+        ['src/clients/profile.ts', 'blackhole', 'budget'],
+        ['src/telemetry.ts', 'blackhole', 'budget'],
+        ...later.flatMap((kind) => sites.map((file) => [file, kind, 'budget'])),
       ]);
       expect(workDirEntries(app)).toEqual(['.gitignore']);
     },

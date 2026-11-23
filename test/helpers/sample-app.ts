@@ -51,6 +51,13 @@ export const history = {
     return repo.commit('Adjust the outgoing calls');
   },
 
+  /** Touches the calls that only some fault kinds tell apart: an unawaited parse, and a search that retries. */
+  faultKindChanges(repo: TempRepo): string {
+    repo.edit('src/clients/audit.ts', 'JSON.stringify({ action })', "JSON.stringify({ action, at: 'web' })");
+    repo.edit('src/clients/search.ts', 'AbortSignal.timeout(200)', 'AbortSignal.timeout(250)');
+    return repo.commit('Adjust the audit and search calls');
+  },
+
   staticChange(repo: TempRepo): string {
     repo.edit(
       'src/config.ts',
