@@ -273,3 +273,65 @@ describe('text report', () => {
     expect(text).not.toContain('at x (y.js:1:1)');
   });
 });
+
+describe('ignored findings in the text report', () => {
+  const ignored = [
+    { finding: mutationFinding({ line: 9 }), by: 'baseline' as const, reason: 'equivalent' },
+    { finding: mutationFinding({ line: 11 }), by: 'baseline' as const, reason: null },
+    { finding: faultFinding({ kind: 'fire-and-forget' }), by: 'inline' as const, reason: 'telemetry' },
+  ];
+
+  it('says how many findings were ignored and by what, so none is silent', () => {
+    const text = renderText(runResult({ ignored }));
+    expect(text).toContain('3 findings ignored (baseline: 2, inline: 1); --json lists them');
+    expect(text).toContain('Result: 2 findings, 3 ignored (exit 1)');
+  });
+
+  it('still says what was ignored on an otherwise clean run', () => {
+    const text = renderText(runResult({ findings: [], ignored: ignored.slice(0, 1) }));
+    expect(text).toContain('1 finding ignored (baseline: 1, inline: 0); --json lists them');
+    expect(text).toContain('Result: clean, everything in scope was checked; 1 finding ignored (exit 0)');
+  });
+
+  it('lists stale baseline entries and the command that removes them, without failing', () => {
+    const text = renderText(
+      runResult({
+        findings: [],
+        baseline: {
+          file: 'chimpd-baseline.json',
+          present: true,
+          entries: 2,
+          stale: [
+            { source: 'mutation', file: 'src/a.ts', mutator: 'EqualityOperator', replacement: 'a > b', statement: '0123456789abcdef', reason: null },
+            { source: 'fault', file: 'src/b.ts', function: 'load', kind: 'hang-no-timeout', reason: 'slow upstream' },
+          ],
+          notEvaluated: [],
+        },
+      }),
+    );
+    expect(text).toContain('Stale baseline entries (2), matching nothing in scope any more; chimpd baseline --prune removes them:');
+    expect(text).toContain('  src/a.ts: EqualityOperator mutant a > b');
+    expect(text).toContain('  src/b.ts: hang-no-timeout in load');
+    expect(text).toContain('Result: clean, everything in scope was checked (exit 0)');
+  });
+
+  it('lists entries it could not evaluate', () => {
+    const text = renderText(
+      runResult({
+        baseline: {
+          file: 'chimpd-baseline.json',
+          present: true,
+          entries: 1,
+          stale: [],
+          notEvaluated: [{ source: 'fault', file: 'src/b.ts', function: null, kind: 'fire-and-forget', reason: null }],
+        },
+      }),
+    );
+    expect(text).toContain('Baseline entries not evaluated (1), their code was in scope but not fully checked:');
+    expect(text).toContain('  src/b.ts: fire-and-forget in an anonymous function');
+  });
+
+  it('says nothing about ignores when there are none', () => {
+    expect(renderText(runResult())).not.toContain('ignored');
+  });
+});

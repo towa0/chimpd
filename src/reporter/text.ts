@@ -1,4 +1,5 @@
 import { firstErrorLine, PRESETS } from '../core/index.js';
+import type { BaselineEntry } from '../baseline/index.js';
 import { exitCodeOf, LEVELS, type ExitOptions, type Finding, type Item, type RunResult } from '../orchestrator/index.js';
 
 const INDENT = '  ';
@@ -34,7 +35,8 @@ function verdictLine(result: RunResult, options: ExitOptions): string {
   const code = exitCodeOf(result, options);
   if (result.status === 'error') return `Result: tool error (exit ${code})`;
   if (result.status === 'nothing-in-scope') return `Result: nothing in scope (exit ${code})`;
-  const findings = plural(result.findings.length, 'finding');
+  const ignored = result.ignored.length;
+  const findings = `${plural(result.findings.length, 'finding')}${ignored > 0 ? `, ${ignored} ignored` : ''}`;
   if (result.status === 'inconclusive') {
     const reason = result.statusReason ?? 'a phase failed or nothing in scope could be checked';
     return `Result: inconclusive, ${reason}; ${findings} (exit ${code})`;
@@ -48,8 +50,9 @@ function verdictLine(result: RunResult, options: ExitOptions): string {
     return `Result: ${findings}, coverage partial: ${notChecked(result)} not checked, listed above (exit ${code}${strict})`;
   }
   if (result.findings.length > 0) return `Result: ${findings} (exit ${code})`;
+  const alsoIgnored = ignored > 0 ? `; ${plural(ignored, 'finding')} ignored` : '';
   return result.status === 'completed'
-    ? `Result: clean, everything in scope was checked (exit ${code})`
+    ? `Result: clean, everything in scope was checked${alsoIgnored} (exit ${code})`
     : `Result: ${findings} (exit ${code})`;
 }
 
@@ -126,6 +129,33 @@ function findingsSection(result: RunResult, shown: number): string[] {
   return lines;
 }
 
+function ignoredSection(result: RunResult): string[] {
+  if (result.ignored.length === 0) return [];
+  const byBaseline = result.ignored.filter((entry) => entry.by === 'baseline').length;
+  const inline = result.ignored.length - byBaseline;
+  return [`${plural(result.ignored.length, 'finding')} ignored (baseline: ${byBaseline}, inline: ${inline}); --json lists them`];
+}
+
+function entryLine(entry: BaselineEntry): string {
+  if (entry.source === 'mutation') return `${INDENT}${entry.file}: ${entry.mutator} mutant ${entry.replacement}`;
+  return `${INDENT}${entry.file}: ${entry.kind} in ${entry.function ?? 'an anonymous function'}`;
+}
+
+function baselineSection(result: RunResult): string[] {
+  const { baseline } = result;
+  if (baseline === null) return [];
+  const lines: string[] = [];
+  if (baseline.stale.length > 0) {
+    lines.push(`Stale baseline entries (${baseline.stale.length}), matching nothing in scope any more; chimpd baseline --prune removes them:`);
+    lines.push(...baseline.stale.map(entryLine));
+  }
+  if (baseline.notEvaluated.length > 0) {
+    lines.push(`Baseline entries not evaluated (${baseline.notEvaluated.length}), their code was in scope but not fully checked:`);
+    lines.push(...baseline.notEvaluated.map(entryLine));
+  }
+  return lines;
+}
+
 /** These lists repeat a reason many times, such as every mutant a budget cut off, so they are grouped by it. */
 function groupedSection(title: string, items: readonly Item[], label: (entry: Item) => string): string[] {
   if (items.length === 0) return [];
@@ -179,6 +209,8 @@ export function renderText(result: RunResult, options: ExitOptions = {}): string
     coverageSection(result),
     groupedSection('Invalid mutants', result.invalid, (entry) => entry.reason),
     findingsSection(result, shown),
+    ignoredSection(result),
+    baselineSection(result),
     groupedSection('Skipped', result.skipped, (entry) => `${entry.source}: ${entry.reason}`),
     inconclusiveSection(result.inconclusive),
     conflictSection(result),

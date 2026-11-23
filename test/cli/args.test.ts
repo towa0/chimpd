@@ -19,15 +19,24 @@ describe('command line parsing', () => {
       ),
     ).toEqual({
       kind: 'run',
-      options: { level: 'shake', base: 'main', json: true, strict: true, verbose: true, seed: 17, cwd: path.join(CWD, 'app') },
+      options: { level: 'shake', base: 'main', json: true, strict: true, verbose: true, seed: 17, cwd: path.join(CWD, 'app'), plan: false },
     });
   });
 
   it('defaults to text, non-strict, no base, no seed and the current directory', () => {
     expect(parseCliArgs(['run', '--level=poke'], CWD)).toEqual({
       kind: 'run',
-      options: { level: 'poke', base: undefined, json: false, strict: false, verbose: false, seed: undefined, cwd: CWD },
+      options: { level: 'poke', base: undefined, json: false, strict: false, verbose: false, seed: undefined, cwd: CWD, plan: false },
     });
+  });
+
+  it('reads --plan with the same flags as a run', () => {
+    expect(parseCliArgs(['run', '--plan', '--level', 'prod', '--base', 'main', '--seed', '4', '--json'], CWD)).toMatchObject({
+      kind: 'run',
+      options: { plan: true, level: 'prod', base: 'main', seed: 4, json: true },
+    });
+    expect(error(['run', '--plan'])).toBe('--level is required: poke, prod or shake');
+    expect(error(['run', '--plan=yes', '--level', 'poke'])).toContain("Option '--plan' does not take an argument");
   });
 
   it('keeps an absolute --cwd as given', () => {
@@ -42,8 +51,8 @@ describe('command line parsing', () => {
   });
 
   it('rejects a missing or unknown command', () => {
-    expect(error([])).toBe('missing command; the only command is run');
-    expect(error(['scan', '--level', 'poke'])).toBe("unknown command 'scan'; the only command is run");
+    expect(error([])).toBe('missing command; the commands are run and baseline');
+    expect(error(['scan', '--level', 'poke'])).toBe("unknown command 'scan'; the commands are run and baseline");
     expect(error(['run', 'extra', '--level', 'poke'])).toBe("unexpected argument 'extra'");
   });
 

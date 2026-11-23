@@ -11,14 +11,44 @@ type Shape =
   | { readonly nullable: Shape }
   | { readonly list: Shape }
   | { readonly fields: Readonly<Record<string, Shape>> }
-  | { readonly oneOf: readonly string[] };
+  | { readonly oneOf: readonly string[] }
+  | { readonly anyOf: readonly Shape[] };
 
 const nullable = (shape: Shape): Shape => ({ nullable: shape });
 const list = (shape: Shape): Shape => ({ list: shape });
 const fields = (shape: Readonly<Record<string, Shape>>): Shape => ({ fields: shape });
 const oneOf = (...values: string[]): Shape => ({ oneOf: values });
+const anyOf = (...shapes: Shape[]): Shape => ({ anyOf: shapes });
 
 const ITEM = fields({ source: oneOf('mutation', 'fault'), file: 'string', line: nullable('number'), reason: 'string' });
+
+const FINDING_FIELDS: Readonly<Record<string, Shape>> = {
+  source: oneOf('mutation', 'fault'),
+  kind: oneOf('survived', 'no-coverage', 'hang-no-timeout', 'abort-mishandled', 'timeout-exceeds-budget', 'fire-and-forget', 'invalid-ignore'),
+  file: 'string',
+  line: 'number',
+  column: 'number',
+  functionName: nullable('string'),
+  message: 'string',
+  severity: fields({ score: 'number', level: oneOf('high', 'medium', 'low'), base: 'number', prior: 'number' }),
+  mutation: nullable(
+    fields({
+      mutatorName: 'string',
+      replacement: 'string',
+      status: 'string',
+      endLine: 'number',
+      endColumn: 'number',
+      coveredBy: list('string'),
+      statement: nullable('string'),
+    }),
+  ),
+  fault: nullable(fields({ verdict: 'string', path: oneOf('fetch', 'http'), tests: list('string') })),
+};
+
+const BASELINE_ENTRY = anyOf(
+  fields({ source: oneOf('mutation'), file: 'string', mutator: 'string', replacement: 'string', statement: 'string', reason: nullable('string') }),
+  fields({ source: oneOf('fault'), file: 'string', function: nullable('string'), kind: 'string', reason: nullable('string') }),
+);
 
 /** Schema version 1. Changing this object without bumping SCHEMA_VERSION is the mistake these tests exist to catch. */
 const SCHEMA_V1: Shape = fields({
@@ -54,29 +84,9 @@ const SCHEMA_V1: Shape = fields({
       spentMs: 'number',
     }),
   ),
-  findings: list(
-    fields({
-      source: oneOf('mutation', 'fault'),
-      kind: oneOf('survived', 'no-coverage', 'hang-no-timeout', 'abort-mishandled', 'timeout-exceeds-budget', 'fire-and-forget'),
-      file: 'string',
-      line: 'number',
-      column: 'number',
-      functionName: nullable('string'),
-      message: 'string',
-      severity: fields({ score: 'number', level: oneOf('high', 'medium', 'low'), base: 'number', prior: 'number' }),
-      mutation: nullable(
-        fields({
-          mutatorName: 'string',
-          replacement: 'string',
-          status: 'string',
-          endLine: 'number',
-          endColumn: 'number',
-          coveredBy: list('string'),
-        }),
-      ),
-      fault: nullable(fields({ verdict: 'string', path: oneOf('fetch', 'http'), tests: list('string') })),
-    }),
-  ),
+  findings: list(fields(FINDING_FIELDS)),
+  ignored: list(fields({ ...FINDING_FIELDS, ignoredBy: oneOf('baseline', 'inline'), ignoreReason: nullable('string') })),
+  baseline: nullable(fields({ file: 'string', present: 'boolean', entries: 'number', stale: list(BASELINE_ENTRY), notEvaluated: list(BASELINE_ENTRY) })),
   coverage: fields({
     checked: fields({ mutants: 'number', invalidMutants: 'number', callSites: 'number' }),
     invalid: list(ITEM),
@@ -89,6 +99,10 @@ const SCHEMA_V1: Shape = fields({
 function violations(value: unknown, shape: Shape, at = '$'): string[] {
   if (typeof shape === 'string') return typeof value === shape ? [] : [`${at}: expected ${shape}, got ${JSON.stringify(value)}`];
   if ('nullable' in shape) return value === null ? [] : violations(value, shape.nullable, at);
+  if ('anyOf' in shape) {
+    const attempts = shape.anyOf.map((option) => violations(value, option, at));
+    return attempts.some((problems) => problems.length === 0) ? [] : (attempts[0] ?? []);
+  }
   if ('oneOf' in shape) return shape.oneOf.includes(value as string) ? [] : [`${at}: ${JSON.stringify(value)} is not one of ${shape.oneOf.join(', ')}`];
   if ('list' in shape) {
     if (!Array.isArray(value)) return [`${at}: expected a list`];
@@ -126,6 +140,17 @@ const full = runResult({
   inconclusive: [{ source: 'fault', file: 'src/a.ts', line: 9, reason: 'the test did not reach the call site under the fault' }],
   conflicts: [{ testFile: 'test/n.test.ts', patched: ['fetch'] }],
   invalid: [{ source: 'mutation', file: 'src/a.ts', line: 6, reason: 'compile error: src/a.ts(6,3): error TS2322: Type mismatch.' }],
+  ignored: [
+    { finding: mutationFinding({ line: 9 }), by: 'baseline', reason: 'equivalent' },
+    { finding: faultFinding({ kind: 'fire-and-forget' }), by: 'inline', reason: 'telemetry' },
+  ],
+  baseline: {
+    file: 'chimpd-baseline.json',
+    present: true,
+    entries: 3,
+    stale: [{ source: 'mutation', file: 'src/a.ts', mutator: 'EqualityOperator', replacement: 'a > b', statement: '0123456789abcdef', reason: null }],
+    notEvaluated: [{ source: 'fault', file: 'src/b.ts', function: null, kind: 'hang-no-timeout', reason: 'slow upstream' }],
+  },
 });
 
 describe('JSON report schema', () => {
@@ -182,6 +207,21 @@ describe('JSON report schema', () => {
     ]);
     expect(report.findings[0]?.fault).toEqual({ verdict: 'hang', path: 'http', tests: ['test/ledger.test.ts > posts a ledger entry'] });
     expect(report.findings[1]?.mutation).toMatchObject({ replacement: 'orderTotal > 120', coveredBy: ['test/discount.test.ts#applies'] });
+  });
+
+  it('lists every ignored finding with what ignored it and why, apart from the findings', () => {
+    const report = toJsonReport(full);
+    expect(report.ignored.map((entry) => [entry.kind, entry.ignoredBy, entry.ignoreReason])).toEqual([
+      ['survived', 'baseline', 'equivalent'],
+      ['fire-and-forget', 'inline', 'telemetry'],
+    ]);
+    expect(report.findings).toHaveLength(2);
+    expect(report.baseline).toMatchObject({ file: 'chimpd-baseline.json', entries: 3, stale: [{ mutator: 'EqualityOperator' }] });
+  });
+
+  it('does not count ignored findings in the exit code', () => {
+    const onlyIgnored = runResult({ findings: [], ignored: full.ignored });
+    expect(toJsonReport(onlyIgnored).exitCode).toBe(0);
   });
 
   it('describes the preset the run used', () => {

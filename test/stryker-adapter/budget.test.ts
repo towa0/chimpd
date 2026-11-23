@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Clock, ScopeRange } from '../../src/core/index.js';
-import { runMutation, type WorkerMessage } from '../../src/stryker-adapter/index.js';
+import { planBatches, runMutation, type WorkerMessage } from '../../src/stryker-adapter/index.js';
 import { createTempRepo, type TempRepo } from '../helpers/temp-repo.js';
 
 const fakeWorker = fileURLToPath(new URL('../fixtures/fake-stryker-worker.mjs', import.meta.url));
@@ -211,5 +211,25 @@ describe('budget enforcement', () => {
     expect(result.mutants).toEqual([]);
     expect(result.notTested.unplannedFiles).toEqual(['src/a.ts', 'src/b.ts']);
     expect(grandchildren()).toEqual([]);
+  });
+
+  it('plans its batches in the order the seed gives files of equal prior', async () => {
+    const ranges = ['src/a.ts', 'src/b.ts', 'src/c.ts', 'src/d.ts', 'src/e.ts', 'src/f.ts'].map(range);
+    const unseeded = planBatches(ranges, 3).map((batch) => batch.files.map((entry) => entry.file));
+    expect([1, 2, 3].some((seed) => JSON.stringify(planBatches(ranges, 3, seed).map((batch) => batch.files.map((entry) => entry.file))) !== JSON.stringify(unseeded))).toBe(true);
+    for (const seed of [1, 2, 3]) {
+      const result = await runMutation({
+        targetRoot: repo.dir,
+        ranges,
+        intensity: 3,
+        ignoreStatic: true,
+        budgetMs: 0,
+        workerEntry: fakeWorker,
+        seed,
+      });
+      expect(result.batches.map((batch) => batch.files)).toEqual(
+        planBatches(ranges, 3, seed).map((batch) => batch.files.map((entry) => entry.file)),
+      );
+    }
   });
 });

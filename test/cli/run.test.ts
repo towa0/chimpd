@@ -1,19 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import { packageVersion, runCli, type CliDeps } from '../../src/cli/run.js';
 import type { RunOptions, RunResult } from '../../src/orchestrator/index.js';
-import { runResult } from '../helpers/run-fixtures.js';
+import type { PlanOptions, RunPlan } from '../../src/plan/index.js';
+import { runPlan, runResult } from '../helpers/run-fixtures.js';
 
 interface Captured {
   readonly code: number;
   readonly stdout: string;
   readonly stderr: string;
   readonly calls: RunOptions[];
+  readonly plans: PlanOptions[];
 }
 
-async function cli(argv: string[], result: RunResult | Error = runResult()): Promise<Captured> {
+async function cli(argv: string[], result: RunResult | Error = runResult(), planned: RunPlan | Error = runPlan()): Promise<Captured> {
   let stdout = '';
   let stderr = '';
   const calls: RunOptions[] = [];
+  const plans: PlanOptions[] = [];
   const deps: Partial<CliDeps> = {
     cwd: '/work',
     version: () => '9.9.9',
@@ -21,9 +24,13 @@ async function cli(argv: string[], result: RunResult | Error = runResult()): Pro
       calls.push(options);
       return result instanceof Error ? Promise.reject(result) : Promise.resolve(result);
     },
+    plan: (options) => {
+      plans.push(options);
+      return planned instanceof Error ? Promise.reject(planned) : Promise.resolve(planned);
+    },
   };
   const code = await runCli(argv, { stdout: (text) => (stdout += text), stderr: (text) => (stderr += text) }, deps);
-  return { code, stdout, stderr, calls };
+  return { code, stdout, stderr, calls, plans };
 }
 
 const partial = runResult({
@@ -66,6 +73,34 @@ describe('the run command', () => {
     const run = await cli(['run', '--level', 'poke'], new Error('kaboom'));
     expect(run.code).toBe(2);
     expect(run.stderr).toContain('chimpd: Error: kaboom');
+    expect(run.stdout).toBe('');
+  });
+});
+
+describe('the run command with --plan', () => {
+  it('plans instead of running, with the same options, and prints the text plan', async () => {
+    const run = await cli(['run', '--plan', '--level', 'prod', '--base', 'main', '--seed', '5']);
+    expect(run.calls).toEqual([]);
+    expect(run.plans).toEqual([{ cwd: expect.stringContaining('work') as string, level: 'prod', base: 'main', seed: 5 }]);
+    expect(run.stdout).toContain('nothing was run');
+    expect(run.code).toBe(0);
+  });
+
+  it('prints the JSON plan with --json', async () => {
+    const run = await cli(['run', '--plan', '--level', 'poke', '--json']);
+    expect(JSON.parse(run.stdout)).toMatchObject({ report: 'plan', schemaVersion: 1, exitCode: 0 });
+  });
+
+  it('exits 2 when the plan cannot be computed', async () => {
+    const failed = await cli(['run', '--plan', '--level', 'poke'], runResult(), runPlan({ status: 'error', error: 'not a git repository' }));
+    expect(failed.code).toBe(2);
+    expect(failed.stdout).toContain('Error: not a git repository');
+  });
+
+  it('reports an unexpected exception while planning on stderr and exits 2', async () => {
+    const run = await cli(['run', '--plan', '--level', 'poke'], runResult(), new Error('plan kaboom'));
+    expect(run.code).toBe(2);
+    expect(run.stderr).toContain('chimpd: Error: plan kaboom');
     expect(run.stdout).toBe('');
   });
 });

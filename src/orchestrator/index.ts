@@ -6,16 +6,21 @@ import {
   decideIgnoreStatic,
   firstErrorLine,
   git,
+  isValidSeed,
+  MAX_SEED,
   mergeRangesByFile,
   PRESETS,
   realNow,
   resolveSha,
+  seedError,
   startBudget,
   type Preset,
+  type MutantRecord,
   type ScopeRange,
 } from '../core/index.js';
+import { applyIgnores, BASELINE_FILE, loadBaseline, type Baseline } from '../baseline/index.js';
 import { DEFAULT_BASE, findOutgoingCalls, scopeDiff, type DiffScope, type DiffScopeOptions } from '../diff-scoper/index.js';
-import { runFaults, type FaultRunRequest, type FaultRunResult } from '../fault-run/index.js';
+import { runFaults, type CallSiteResult, type FaultRunRequest, type FaultRunResult } from '../fault-run/index.js';
 import { runMutation, type MutationRequest, type MutationResult } from '../stryker-adapter/index.js';
 import {
   boundaryRanges,
@@ -60,9 +65,10 @@ export interface OrchestratorDeps {
   readonly runMutation: (request: MutationRequest) => Promise<MutationResult>;
   readonly runFaults: (request: FaultRunRequest) => Promise<FaultRunResult>;
   readonly loadVitest: (targetRoot: string) => Promise<TargetVitest>;
+  readonly loadBaseline: (targetRoot: string) => Promise<Baseline>;
 }
 
-const DEFAULT_DEPS: OrchestratorDeps = { scopeDiff, computeBoundary, runMutation, runFaults, loadVitest: loadTargetVitest };
+const DEFAULT_DEPS: OrchestratorDeps = { scopeDiff, computeBoundary, runMutation, runFaults, loadVitest: loadTargetVitest, loadBaseline };
 
 export interface RunOptions {
   readonly cwd: string;
@@ -74,8 +80,6 @@ export interface RunOptions {
   /** Receives what the target's own tests write to stdout and stderr in either phase; discarded without one. */
   readonly onTargetOutput?: (text: string) => void;
 }
-
-const MAX_SEED = 2 ** 31 - 1;
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -89,7 +93,7 @@ function detailOf(error: unknown): string {
   return error instanceof Error ? (error.stack ?? error.message) : String(error);
 }
 
-async function checkTarget(cwd: string, base: string): Promise<void> {
+export async function checkTarget(cwd: string, base: string): Promise<void> {
   if (!fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) throw new ChimpdError(`${cwd} is not a directory`);
   try {
     await git(cwd, ['rev-parse', '--is-inside-work-tree']);
@@ -103,7 +107,9 @@ async function checkTarget(cwd: string, base: string): Promise<void> {
   }
 }
 
-function staticLines(ranges: readonly ScopeRange[]): number {
+export const TEST_ONLY_NO_FAULTS = 'only test files changed; the fault phase faults calls made from changed source code';
+
+export function staticLines(ranges: readonly ScopeRange[]): number {
   const merged = mergeRangesByFile(ranges.filter((range) => range.staticRegion));
   return [...merged.values()].reduce((total, intervals) => total + countLines(intervals), 0);
 }
@@ -171,7 +177,8 @@ function byLocation(a: Item, b: Item): number {
   );
 }
 
-interface Plan {
+/** What a run checks: the scope, and the ranges each phase is given. */
+export interface ScopePlan {
   readonly scope: RunScope;
   readonly mutationRanges: readonly ScopeRange[];
   readonly faultRanges: readonly ScopeRange[];
@@ -179,7 +186,13 @@ interface Plan {
   readonly scopeItems: readonly Item[];
 }
 
-function planScope(targetRoot: string, scope: DiffScope, preset: Preset, deps: OrchestratorDeps): Plan {
+export function planScope(
+  targetRoot: string,
+  scope: DiffScope,
+  preset: Preset,
+  deps: Pick<OrchestratorDeps, 'computeBoundary'>,
+  seed: number,
+): ScopePlan {
   const base = {
     changedSourceFiles: scope.changedSourceFiles,
     changedTestFiles: scope.changedTestFiles,
@@ -201,6 +214,7 @@ function planScope(targetRoot: string, scope: DiffScope, preset: Preset, deps: O
     changedTestFiles: scope.changedTestFiles,
     depth: preset.testOnlyDepth,
     fileCap: preset.testOnlyFileCap,
+    seed,
   });
   const scopeItems: Item[] =
     boundary.truncated > 0
@@ -250,17 +264,24 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
     skipped: [],
     inconclusive: [],
     conflicts: [],
+    ignored: [],
+    baseline: null,
     ...partial,
     spentMs: Math.round(budget.spentMs()),
   });
   const failed = (error: unknown): RunResult => result({ status: 'error', error: messageOf(error) });
 
-  let plan: Plan;
+  if (!isValidSeed(seed)) return failed(seedError(seed));
+
+  let plan: ScopePlan;
+  let baseline: Baseline;
   try {
     await checkTarget(targetRoot, base);
+    // A baseline that cannot be read would silently stop ignoring what it lists, so it ends the run first.
+    baseline = await deps.loadBaseline(targetRoot);
     const scope = await deps.scopeDiff({ repoRoot: targetRoot, mode: preset.scopeMode, base });
     gitInfo = { base: scope.base, mergeBase: scope.mergeBase, head: scope.head, dirty: scope.dirty };
-    plan = planScope(targetRoot, scope, preset, deps);
+    plan = planScope(targetRoot, scope, preset, deps, seed);
     runScope = plan.scope;
   } catch (error) {
     return failed(error);
@@ -278,6 +299,7 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
         { name: 'faults', status: 'not-run', statusReason: reason, budgetMs: 0, spentMs: 0 },
       ],
       skipped: plan.scopeItems,
+      baseline: { file: BASELINE_FILE, present: baseline.present, entries: baseline.entries.length, stale: [], notEvaluated: [] },
     });
   }
 
@@ -296,6 +318,8 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
   const phases: PhaseReport[] = [];
   const collected: PhaseItems[] = [{ checked: NOTHING_CHECKED, findings: [], invalid: [], skipped: plan.scopeItems, inconclusive: [] }];
   const conflicts: FaultRunResult['conflicts'][number][] = [];
+  const considered: MutantRecord[] = [];
+  const faulted: CallSiteResult[] = [];
 
   const mutationMs = Math.round(mutationBudgetMs({
     remainingMs: budget.remainingMs(),
@@ -324,6 +348,7 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
           mutationBudgetMs: mutationMs,
         }).ignoreStatic,
         budgetMs: mutationMs,
+        seed,
         ...output,
       });
       const { status, reason, detail } = mutationPhaseStatus(mutation);
@@ -336,9 +361,11 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
         spentMs: Math.round(now() - startedAt),
       });
       if (plan.changedTestFiles === null) {
+        considered.push(...mutation.mutants);
         collected.push(mutationItems(mutation, mutation.mutants, null));
       } else {
         const report = summarizeTestOnly(mutation.mutants, mutation.tests, plan.changedTestFiles);
+        considered.push(...report.mutants);
         collected.push(mutationItems(mutation, report.mutants, report.coveredNotKilled));
       }
     } catch (error) {
@@ -355,10 +382,7 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
   }
 
   if (!faultsInScope || vitest === null) {
-    const reason =
-      plan.scope.mode === 'test-only'
-        ? 'only test files changed; the fault phase faults calls made from changed source code'
-        : 'no TypeScript source in scope to fault';
+    const reason = plan.scope.mode === 'test-only' ? TEST_ONLY_NO_FAULTS : 'no TypeScript source in scope to fault';
     phases.push({ name: 'faults', status: 'not-run', statusReason: reason, budgetMs: 0, spentMs: 0 });
   } else {
     const faultMs = Math.round(budget.remainingMs());
@@ -382,6 +406,7 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
           budgetMs: faultMs,
           vitestNode: vitest.node,
           now,
+          seed,
           ...output,
         });
         phases.push({
@@ -392,6 +417,7 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
           spentMs: Math.round(now() - startedAt),
         });
         conflicts.push(...faults.conflicts);
+        faulted.push(...faults.results);
         collected.push(faultItems(faults, preset));
         if (discoveryFinished(faults)) {
           const calls = findOutgoingCalls(targetRoot, plan.faultRanges);
@@ -414,7 +440,16 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
     }
   }
 
-  const findings = collected.flatMap((items) => items.findings).sort(bySeverity);
+  const ignores = applyIgnores({
+    targetRoot,
+    baseline,
+    findings: collected.flatMap((items) => items.findings),
+    mutants: considered,
+    mutationRanges: plan.mutationRanges,
+    faultRanges: plan.faultRanges,
+    faulted,
+  });
+  const findings = [...ignores.findings].sort(bySeverity);
   const invalid = collected.flatMap((items) => items.invalid).sort(byLocation);
   const skipped = collected.flatMap((items) => items.skipped).sort(byLocation);
   const inconclusive = collected.flatMap((items) => items.inconclusive).sort(byLocation);
@@ -438,6 +473,14 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
     skipped,
     inconclusive,
     conflicts,
+    ignored: ignores.ignored.toSorted((a, b) => bySeverity(a.finding, b.finding)),
+    baseline: {
+      file: BASELINE_FILE,
+      present: baseline.present,
+      entries: baseline.entries.length,
+      stale: ignores.stale,
+      notEvaluated: ignores.notEvaluated,
+    },
   });
 }
 

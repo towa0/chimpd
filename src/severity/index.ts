@@ -5,7 +5,8 @@ export { MAX_PRIOR, priorOf, SENSITIVE_PRIOR, STORAGE_PRIOR, tokenize } from './
 
 export type MutationFindingKind = 'survived' | 'no-coverage';
 
-export type FindingKind = MutationFindingKind | FaultFindingKind;
+/** invalid-ignore: a chimpd-ignore comment without a reason, which is reported instead of honoured. */
+export type FindingKind = MutationFindingKind | FaultFindingKind | 'invalid-ignore';
 
 export type SeverityLevel = 'high' | 'medium' | 'low';
 
@@ -28,6 +29,7 @@ export const BASE_SCORES: Readonly<Record<FindingKind, number>> = {
   'timeout-exceeds-budget': 50,
   'no-coverage': 45,
   'fire-and-forget': 40,
+  'invalid-ignore': 50,
 };
 
 export const HIGH_SEVERITY = 70;

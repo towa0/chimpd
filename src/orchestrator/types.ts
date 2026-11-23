@@ -1,3 +1,4 @@
+import type { BaselineEntry } from '../baseline/file.js';
 import type { BlackHoleVerdictKind, Intensity, MutantStatus } from '../core/index.js';
 import type { IgnoredFile, ScopeNote } from '../diff-scoper/index.js';
 import type { FileConflict } from '../fault-run/index.js';
@@ -31,6 +32,8 @@ export interface MutationDetail {
   readonly endLine: number;
   readonly endColumn: number;
   readonly coveredBy: readonly string[];
+  /** Hash of the normalized source of the innermost statement around the mutant; null when none was found. */
+  readonly statement: string | null;
 }
 
 export interface FaultDetail {
@@ -97,6 +100,26 @@ export interface Checked {
   readonly callSites: number;
 }
 
+export type IgnoredBy = 'baseline' | 'inline';
+
+/** A finding a baseline entry or a chimpd-ignore comment accepts; it is listed, but not counted. */
+export interface IgnoredFinding {
+  readonly finding: Finding;
+  readonly by: IgnoredBy;
+  readonly reason: string | null;
+}
+
+export interface BaselineReport {
+  /** Path of the baseline file from the repository root. */
+  readonly file: string;
+  readonly present: boolean;
+  readonly entries: number;
+  /** Entries that no longer match anything in scope; `chimpd baseline --prune` removes them. */
+  readonly stale: readonly BaselineEntry[];
+  /** Entries whose code was in scope but not checked well enough to tell whether they still match. */
+  readonly notEvaluated: readonly BaselineEntry[];
+}
+
 export interface RunResult {
   readonly status: RunStatus;
   /** Why the run is inconclusive or nothing-checkable; null for the other statuses. */
@@ -118,4 +141,8 @@ export interface RunResult {
   readonly skipped: readonly Item[];
   readonly inconclusive: readonly Item[];
   readonly conflicts: readonly FileConflict[];
+  /** Findings set aside by the baseline or an inline comment; not in `findings` and not in the exit code. */
+  readonly ignored: readonly IgnoredFinding[];
+  /** null when the run stopped before the baseline was read. */
+  readonly baseline: BaselineReport | null;
 }

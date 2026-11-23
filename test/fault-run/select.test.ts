@@ -118,6 +118,69 @@ describe('selectCallSites', () => {
   });
 });
 
+describe('selectCallSites with a seed', () => {
+  const plain = Array.from({ length: 10 }, (_, index) => site(`src/client-${index}.ts`, 'call'));
+  const sensitive = [site('src/payments/charge.ts', 'chargeCard'), site('src/auth/token.ts', 'refreshToken')];
+  const plannedFiles = (seed: number, sites: readonly CallSite[] = plain): string[] =>
+    keys(selectCallSites(sites, PRESETS[1], seed).planned);
+
+  it('picks the same sites over the cap for the same seed', () => {
+    expect(plannedFiles(11)).toEqual(plannedFiles(11));
+    expect(plannedFiles(11, plain.toReversed())).toEqual(plannedFiles(11));
+  });
+
+  it('picks different sites over the cap for some different seeds', () => {
+    const picks = new Set([0, 1, 2, 3, 4, 5].map((seed) => plannedFiles(seed).join(',')));
+    expect(picks.size).toBeGreaterThan(1);
+  });
+
+  it('never drops a more severe site in favour of a less severe one, whatever the seed', () => {
+    const sites = [...plain, ...sensitive];
+    for (let seed = 0; seed < 40; seed += 1) {
+      const selection = selectCallSites(sites, PRESETS[1], seed);
+      const lowestPlanned = Math.min(...selection.planned.map(({ site: entry }) => entry.prior));
+      const highestSkipped = Math.max(...selection.skipped.map(({ site: entry }) => entry.prior));
+      expect(lowestPlanned).toBeGreaterThanOrEqual(highestSkipped);
+      expect(keys(selection.planned).slice(0, 2).toSorted()).toEqual(['src/auth/token.ts', 'src/payments/charge.ts']);
+    }
+  });
+
+  it('lists every site exactly once, planned or skipped', () => {
+    const selection = selectCallSites([...plain, ...sensitive], PRESETS[1], 3);
+    const all = [...keys(selection.planned), ...keys(selection.skipped)].toSorted();
+    expect(all).toEqual([...plain, ...sensitive].map((entry) => entry.file).toSorted());
+  });
+
+  it('keeps the cheapest tests first and lets the seed break only ties in cost', () => {
+    const reachedBy = [
+      reaching('slow', 90),
+      ...Array.from({ length: 8 }, (_, index) => reaching(`tie ${index}`, 20)),
+      reaching('fast', 2),
+    ];
+    const picks = new Set<string>();
+    for (let seed = 0; seed < 20; seed += 1) {
+      const selection = selectCallSites([site('src/a.ts', 'call', { reachedBy })], PRESETS[3], seed);
+      const names = selection.planned[0]?.tests.map(({ test }) => test.name) ?? [];
+      expect(names[0]).toBe('fast');
+      expect(names.slice(1).every((name) => name.startsWith('tie '))).toBe(true);
+      expect(selectCallSites([site('src/a.ts', 'call', { reachedBy })], PRESETS[3], seed).planned[0]?.tests).toEqual(
+        selection.planned[0]?.tests,
+      );
+      picks.add(names.join(','));
+    }
+    expect(picks.size).toBeGreaterThan(1);
+  });
+
+  it('still sets aside unattributable and unreached sites with a seed', () => {
+    const orphan = site('src/orphan.ts', 'call', { reachedBy: [] });
+    const warm = site('src/warmup.ts', 'warm', { reachedBy: [], unattributedCalls: 1 });
+    const selection = selectCallSites([orphan, warm, site('src/a.ts', 'call')], PRESETS[1], 5);
+    expect(selection.skipped).toEqual([{ site: orphan, reason: 'no-passing-test' }]);
+    expect(selection.unattributable).toEqual([warm]);
+    expect(keys(selection.planned)).toEqual(['src/a.ts']);
+  });
+});
+
 describe('scopeOf', () => {
   const ranges: ScopeRange[] = [
     { file: 'src/a.ts', startLine: 3, endLine: 3, kind: 'changed', staticRegion: false },

@@ -1,9 +1,11 @@
+import type { BaselineEntry } from '../baseline/index.js';
 import { PRESETS } from '../core/index.js';
 import {
   exitCodeOf,
   LEVELS,
   type ExitOptions,
   type Finding,
+  type IgnoredFinding,
   type Item,
   type PhaseReport,
   type RunResult,
@@ -28,8 +30,33 @@ export interface JsonFinding {
     readonly endLine: number;
     readonly endColumn: number;
     readonly coveredBy: readonly string[];
+    readonly statement: string | null;
   } | null;
   readonly fault: { readonly verdict: string; readonly path: 'fetch' | 'http'; readonly tests: readonly string[] } | null;
+}
+
+export interface JsonIgnoredFinding extends JsonFinding {
+  readonly ignoredBy: IgnoredFinding['by'];
+  readonly ignoreReason: string | null;
+}
+
+export type JsonBaselineEntry =
+  | {
+      readonly source: 'mutation';
+      readonly file: string;
+      readonly mutator: string;
+      readonly replacement: string;
+      readonly statement: string;
+      readonly reason: string | null;
+    }
+  | { readonly source: 'fault'; readonly file: string; readonly function: string | null; readonly kind: string; readonly reason: string | null };
+
+export interface JsonBaseline {
+  readonly file: string;
+  readonly present: boolean;
+  readonly entries: number;
+  readonly stale: readonly JsonBaselineEntry[];
+  readonly notEvaluated: readonly JsonBaselineEntry[];
 }
 
 export interface JsonItem {
@@ -83,6 +110,9 @@ export interface JsonReport {
   } | null;
   readonly phases: readonly JsonPhase[];
   readonly findings: readonly JsonFinding[];
+  /** Findings the baseline or an inline comment set aside; they do not count toward the exit code. */
+  readonly ignored: readonly JsonIgnoredFinding[];
+  readonly baseline: JsonBaseline | null;
   /** What was checked, and everything in scope that was not, each with its reason. */
   readonly coverage: JsonCoverage;
 }
@@ -108,9 +138,23 @@ function finding(entry: Finding): JsonFinding {
             endLine: mutation.endLine,
             endColumn: mutation.endColumn,
             coveredBy: [...mutation.coveredBy],
+            statement: mutation.statement,
           },
     fault: fault === null ? null : { verdict: fault.verdict, path: fault.path, tests: [...fault.tests] },
   };
+}
+
+function baselineEntry(entry: BaselineEntry): JsonBaselineEntry {
+  return entry.source === 'mutation'
+    ? {
+        source: entry.source,
+        file: entry.file,
+        mutator: entry.mutator,
+        replacement: entry.replacement,
+        statement: entry.statement,
+        reason: entry.reason,
+      }
+    : { source: entry.source, file: entry.file, function: entry.function, kind: entry.kind, reason: entry.reason };
 }
 
 function item(entry: Item): JsonItem {
@@ -154,6 +198,17 @@ export function toJsonReport(result: RunResult, options: ExitOptions = {}): Json
       spentMs: Math.round(spentMs),
     })),
     findings: result.findings.map(finding),
+    ignored: result.ignored.map((entry) => ({ ...finding(entry.finding), ignoredBy: entry.by, ignoreReason: entry.reason })),
+    baseline:
+      result.baseline === null
+        ? null
+        : {
+            file: result.baseline.file,
+            present: result.baseline.present,
+            entries: result.baseline.entries,
+            stale: result.baseline.stale.map(baselineEntry),
+            notEvaluated: result.baseline.notEvaluated.map(baselineEntry),
+          },
     coverage: {
       checked: { mutants: checked.mutants, invalidMutants: checked.invalidMutants, callSites: checked.callSites },
       invalid: result.invalid.map(item),

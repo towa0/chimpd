@@ -54,6 +54,26 @@ describe('batch planning', () => {
     expect(planBatches([], 3)).toEqual([]);
   });
 
+  it('orders files of equal prior by the seed, and the same way for the same seed', () => {
+    const plain = Array.from({ length: 8 }, (_, index) => range(`src/plain-${index}.ts`, 1, 10));
+    const planned = (seed: number, input: readonly ScopeRange[] = plain): string =>
+      planBatches(input, 1, seed)
+        .flatMap((batch) => batch.files.map((entry) => entry.file))
+        .join(',');
+    expect(planned(8)).toBe(planned(8));
+    expect(planned(8, plain.toReversed())).toBe(planned(8));
+    expect(new Set([0, 1, 2, 3, 4, 5].map((seed) => planned(seed))).size).toBeGreaterThan(1);
+  });
+
+  it('keeps more sensitive files ahead of less sensitive ones, whatever the seed', () => {
+    for (let seed = 0; seed < 30; seed += 1) {
+      const files = planBatches(ranges, 3, seed).flatMap((batch) => batch.files.map((entry) => entry.file));
+      expect(files.slice(0, 2).toSorted()).toEqual(['src/auth/token.ts', 'src/payments/refund.ts']);
+      expect(files[2]).toBe('src/db/save.ts');
+      expect(files.slice(3).toSorted()).toEqual(['src/alpha.ts', 'src/beta.ts', 'src/zebra.ts']);
+    }
+  });
+
   it('lists every scoped line once in the mutate patterns', () => {
     const [batch] = planBatches(
       [

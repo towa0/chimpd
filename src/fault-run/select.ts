@@ -1,4 +1,4 @@
-import { rangeForLine, type Preset, type ScopeRange } from '../core/index.js';
+import { rangeForLine, seededOrder, type Preset, type ScopeRange } from '../core/index.js';
 import type { ProjectFrame } from '../fault-recon/call-site.js';
 import type { CallSite, ReachingTest, SkippedCallSite } from './types.js';
 
@@ -23,19 +23,15 @@ export interface Selection {
   readonly skipped: readonly SkippedCallSite[];
 }
 
-function compareText(a: string, b: string): number {
-  return a < b ? -1 : a > b ? 1 : 0;
+function testId(entry: ReachingTest): string {
+  return `${entry.test.file}\0${entry.test.name}`;
 }
 
-function bySeverity(a: CallSite, b: CallSite): number {
-  return b.prior - a.prior || compareText(a.key, b.key);
-}
-
-function byCost(a: ReachingTest, b: ReachingTest): number {
-  return a.durationMs - b.durationMs || compareText(a.test.file, b.test.file) || compareText(a.test.name, b.test.name);
-}
-
-export function selectCallSites(sites: readonly CallSite[], limits: SelectionLimits): Selection {
+/** Without a seed, ties fall back to key order for sites and to file, then name, for tests. */
+export function selectCallSites(sites: readonly CallSite[], limits: SelectionLimits, seed?: number): Selection {
+  const tieBreak = seededOrder(seed);
+  const bySeverity = (a: CallSite, b: CallSite): number => b.prior - a.prior || tieBreak(a.key, b.key);
+  const byCost = (a: ReachingTest, b: ReachingTest): number => a.durationMs - b.durationMs || tieBreak(testId(a), testId(b));
   const unattributable: CallSite[] = [];
   const skipped: SkippedCallSite[] = [];
   const reachable: CallSite[] = [];

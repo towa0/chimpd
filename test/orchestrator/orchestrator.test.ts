@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { BASELINE_FILE, serializeBaseline, SourceStatements } from '../../src/baseline/index.js';
 import { PRESETS } from '../../src/core/index.js';
 import type { FaultRunRequest } from '../../src/fault-run/index.js';
 import {
@@ -572,6 +573,43 @@ describe('findings', () => {
     expect(Number.isInteger(picked)).toBe(true);
     expect(picked).toBeGreaterThanOrEqual(0);
   });
+
+  it('passes the seed to both phases, the picked one too', async () => {
+    const repo = changedRepo();
+    const run = harness(repo);
+    await runChimpd(run.options({ seed: 99 }));
+    expect(run.mutationRequests.map((request) => request.seed)).toEqual([99]);
+    expect(run.faultRequests.map((request) => request.seed)).toEqual([99]);
+    const { seed, ...withoutSeed } = run.options();
+    expect(seed).toBe(7);
+    const picked = (await runChimpd(withoutSeed)).seed;
+    expect(run.mutationRequests[1]?.seed).toBe(picked);
+    expect(run.faultRequests[1]?.seed).toBe(picked);
+  });
+
+  it('passes the seed to the test-only boundary', async () => {
+    const repo = changedRepo({ testOnly: true });
+    const seeds: (number | undefined)[] = [];
+    const run = harness(repo, {
+      computeBoundary: (options) => {
+        seeds.push(options.seed);
+        return { files: [], truncated: 0, mocked: [], sourceRoot: 'src' };
+      },
+    });
+    await runChimpd(run.options({ seed: 5 }));
+    expect(seeds).toEqual([5]);
+  });
+
+  it.each([-1, 1.5, 2 ** 31])('reports the seed %s as a tool error without scoping', async (seed) => {
+    const repo = changedRepo();
+    const run = harness(repo);
+    const result = await runChimpd(run.options({ seed }));
+    expect(result.status).toBe('error');
+    expect(result.error).toBe(`seed must be an integer from 0 to 2147483647, not ${seed}`);
+    expect(result.scope).toBeNull();
+    expect(run.mutationRequests).toEqual([]);
+    expect(exitCodeOf(result)).toBe(2);
+  });
 });
 
 const compileError = (line: number) =>
@@ -761,5 +799,82 @@ describe('error reporting', () => {
       expect(Number.isInteger(entry.spentMs)).toBe(true);
     }
     expect(Number.isInteger(result.spentMs)).toBe(true);
+  });
+});
+
+describe('baseline and inline ignores', () => {
+  const survivor = (line: number) =>
+    mutant({ file: 'src/a.ts', start: { line, column: 10 }, end: { line, column: 15 }, mutatorName: 'ArithmeticOperator', replacement: 'a + b' });
+
+  function baselineFor(repo: TempRepo, line: number, reason: string | null): string {
+    const statement = new SourceStatements('src/a.ts', repo.read('src/a.ts')).enclosing(line, 10)[0]?.hash ?? '';
+    return serializeBaseline([{ source: 'mutation', file: 'src/a.ts', mutator: 'ArithmeticOperator', replacement: 'a + b', statement, reason }]);
+  }
+
+  it('sets aside a finding the baseline accepts, lists it as ignored and exits by the rest', async () => {
+    const repo = changedRepo();
+    repo.write(BASELINE_FILE, baselineFor(repo, 2, 'equivalent here'));
+    const run = harness(repo, { runMutation: () => Promise.resolve(mutationResult({ mutants: [survivor(2)] })) });
+    const result = await runChimpd(run.options());
+    expect(result.findings).toEqual([]);
+    expect(result.ignored).toMatchObject([{ by: 'baseline', reason: 'equivalent here', finding: { kind: 'survived', line: 2 } }]);
+    expect(result.baseline).toMatchObject({ present: true, entries: 1, stale: [], notEvaluated: [] });
+    expect(result.status).toBe('completed');
+    expect(exitCodeOf(result)).toBe(0);
+    expect(renderText(result)).toContain('1 finding ignored (baseline: 1, inline: 0)');
+  });
+
+  it('reports an ignore comment without a reason as a finding and does not honour it', async () => {
+    const repo = changedRepo({ changedSource: SOURCE.replace('  return a + b;', '  // chimpd-ignore\n  return a - b;') });
+    const run = harness(repo, { runMutation: () => Promise.resolve(mutationResult({ mutants: [survivor(3)] })) });
+    const result = await runChimpd(run.options());
+    expect(result.findings.map(({ kind, line }) => [kind, line])).toEqual([
+      ['survived', 3],
+      ['invalid-ignore', 2],
+    ]);
+    expect(result.ignored).toEqual([]);
+    expect(exitCodeOf(result)).toBe(1);
+  });
+
+  it('honours an ignore comment with a reason', async () => {
+    const repo = changedRepo({ changedSource: SOURCE.replace('  return a + b;', '  // chimpd-ignore: subtraction is intended\n  return a - b;') });
+    const run = harness(repo, { runMutation: () => Promise.resolve(mutationResult({ mutants: [survivor(3)] })) });
+    const result = await runChimpd(run.options());
+    expect(result.findings).toEqual([]);
+    expect(result.ignored).toMatchObject([{ by: 'inline', reason: 'subtraction is intended' }]);
+    expect(exitCodeOf(result)).toBe(0);
+  });
+
+  it('reports a stale entry without failing the run', async () => {
+    const repo = changedRepo();
+    repo.write(BASELINE_FILE, baselineFor(repo, 2, null));
+    const killed = { ...survivor(2), status: 'Killed' as const };
+    const run = harness(repo, { runMutation: () => Promise.resolve(mutationResult({ mutants: [killed] })) });
+    const result = await runChimpd(run.options());
+    expect(result.baseline?.stale).toHaveLength(1);
+    expect(result.status).toBe('completed');
+    expect(exitCodeOf(result)).toBe(0);
+  });
+
+  it.each([
+    ['a corrupt file', '{ "version": 1, ', 'chimpd-baseline.json is not valid JSON'],
+    ['an unknown version', '{ "version": 3, "entries": [] }\n', 'chimpd-baseline.json has version 3; this chimpd reads version 1'],
+  ])('stops with a tool error on %s, before any phase runs', async (_label, content, message) => {
+    const repo = changedRepo();
+    repo.write(BASELINE_FILE, content);
+    const run = harness(repo);
+    const result = await runChimpd(run.options());
+    expect(result.status).toBe('error');
+    expect(result.error).toContain(message);
+    expect(run.mutationRequests).toEqual([]);
+    expect(run.faultRequests).toEqual([]);
+    expect(exitCodeOf(result)).toBe(2);
+  });
+
+  it('has no baseline report without a baseline file and nothing ignored', async () => {
+    const repo = changedRepo();
+    const result = await runChimpd(harness(repo).options());
+    expect(result.baseline).toMatchObject({ present: false, entries: 0 });
+    expect(result.ignored).toEqual([]);
   });
 });

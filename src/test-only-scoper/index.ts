@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { MutantRecord, ScopeRange } from '../core/index.js';
+import { priorOf, seededOrder, type MutantRecord, type ScopeRange } from '../core/index.js';
 import { createModuleGraph, type ModuleGraph } from './import-graph.js';
 
 export { createModuleGraph } from './import-graph.js';
@@ -13,6 +13,8 @@ export interface BoundaryOptions {
   readonly depth: number;
   readonly fileCap: number;
   readonly tsconfigFile?: string;
+  /** Picks among files of equal distance and prior when the file cap forces a choice. */
+  readonly seed?: number;
 }
 
 export interface BoundaryFile {
@@ -27,7 +29,7 @@ export interface MockedModule {
 }
 
 export interface Boundary {
-  /** Source files to mutate whole, closest to a changed test first, then by path. */
+  /** Source files to mutate whole: closest to a changed test first, then most sensitive, then by the seed or path. */
   readonly files: readonly BoundaryFile[];
   /** Files that were reachable but dropped by the file cap. */
   readonly truncated: number;
@@ -85,9 +87,10 @@ export function computeBoundary(options: BoundaryOptions): Boundary {
     for (const file of mockedOut) mocked.push({ testFile, file: graph.relative(file) });
   }
 
+  const tieBreak = seededOrder(options.seed);
   const ordered = [...nearest]
     .map(([file, distance]) => ({ file: graph.relative(file), distance }))
-    .sort((a, b) => a.distance - b.distance || compareText(a.file, b.file));
+    .sort((a, b) => a.distance - b.distance || priorOf(b.file) - priorOf(a.file) || tieBreak(a.file, b.file));
 
   return {
     files: ordered.slice(0, options.fileCap),

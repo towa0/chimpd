@@ -111,6 +111,23 @@ it(
   RUN_TIMEOUT_MS,
 );
 
+it('plans from the packed tarball, counting mutants without running anything', () => {
+  const planned = createSampleApp();
+  try {
+    history.boundaryChange(planned);
+    const before = planned.git('status', '--porcelain', '--ignored');
+    const run = runBin(['run', '--plan', '--level', 'poke', '--json', '--seed', '11', '--cwd', planned.dir]);
+    expect(run.stderr).toBe('');
+    const report = JSON.parse(run.stdout) as { report: string; schemaVersion: number; exitCode: number; mutation: { total: number | null } };
+    expect(report).toMatchObject({ report: 'plan', schemaVersion: 1, exitCode: 0 });
+    expect(report.mutation.total).toBeGreaterThan(0);
+    expect(run.status).toBe(0);
+    expect(planned.git('status', '--porcelain', '--ignored')).toBe(before);
+  } finally {
+    planned.cleanup();
+  }
+});
+
 it('reports a missing base ref from the packed bin as a tool error', () => {
   const target = app?.dir ?? repoRoot;
   const run = runBin(['run', '--level', 'poke', '--base', 'origin/does-not-exist', '--cwd', target]);

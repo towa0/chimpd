@@ -1,6 +1,7 @@
 import type { MutantRecord } from '../../src/core/index.js';
 import type { CallSite, CallSiteResult, FaultRunResult } from '../../src/fault-run/index.js';
 import type { Finding, RunResult } from '../../src/orchestrator/index.js';
+import type { RunPlan } from '../../src/plan/index.js';
 import { severityOf } from '../../src/severity/index.js';
 import type { BatchReport, MutationResult } from '../../src/stryker-adapter/index.js';
 
@@ -101,6 +102,7 @@ export function mutationFinding(overrides: Partial<Finding> = {}): Finding {
       endLine: 3,
       endColumn: 24,
       coveredBy: ['test/discount.test.ts#applies'],
+      statement: null,
     },
     fault: null,
     ...overrides,
@@ -156,6 +158,57 @@ export function runResult(overrides: Partial<RunResult> = {}): RunResult {
     skipped: [],
     inconclusive: [],
     conflicts: [],
+    ignored: [],
+    baseline: null,
+    ...overrides,
+  };
+}
+
+export function runPlan(overrides: Partial<RunPlan> = {}): RunPlan {
+  return {
+    status: 'planned',
+    error: null,
+    level: 'poke',
+    seed: 7,
+    git: { base: 'origin/main', mergeBase: 'a'.repeat(40), head: 'b'.repeat(40), dirty: false },
+    scope: {
+      mode: 'diff',
+      changedSourceFiles: ['src/a.ts', 'src/b.ts'],
+      changedTestFiles: ['test/a.test.ts'],
+      ignoredFiles: [
+        { file: 'README.md', reason: 'not-typescript' },
+        { file: 'vitest.config.ts', reason: 'config-file' },
+      ],
+      notes: [],
+      boundaryFiles: [],
+    },
+    scopeItems: [],
+    vitestConfig: 'vitest.config.ts',
+    runWouldFail: null,
+    mutation: {
+      files: [
+        { file: 'src/a.ts', mutants: 8, moduleLevel: 2, reason: null },
+        { file: 'src/b.ts', mutants: null, moduleLevel: null, reason: 'count unavailable: Unexpected token (1:5)' },
+      ],
+      total: null,
+      batches: [['src/a.ts', 'src/b.ts']],
+      ignoreStatic: true,
+      staticReason: 'static mutants are only tested at Shake',
+      notRun: null,
+    },
+    faults: {
+      calls: [{ file: 'src/a.ts', line: 12, callee: 'fetch', scopeKind: 'changed' }],
+      maxCallSites: 3,
+      testsPerCallSite: 1,
+      notRun: null,
+    },
+    budget: { totalMs: 120_000, mutationMs: 84_000, faultMs: 36_000 },
+    estimate: {
+      totalMs: 30_000,
+      mutationMs: 18_000,
+      faultMs: 12_000,
+      derivation: ['mutation: 1 batch x 10 s assumed Stryker start + 16 mutants x 0.5 s assumed each'],
+    },
     ...overrides,
   };
 }

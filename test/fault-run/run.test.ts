@@ -3,11 +3,12 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as vitestNode from 'vitest/node';
-import type { Intensity } from '../../src/core/index.js';
+import { PRESETS, type Intensity } from '../../src/core/index.js';
 import { scopeDiff } from '../../src/diff-scoper/index.js';
 import { pristineFingerprints } from '../../src/fault-recon/conflicts.js';
 import { runFaults, type CallSiteResult, type FaultRunResult } from '../../src/fault-run/index.js';
 import { runInstrumented } from '../../src/fault-run/instrumented.js';
+import { selectCallSites } from '../../src/fault-run/select.js';
 import { addPairModule } from '../helpers/fault-fixtures.js';
 import { createSampleApp, history, type SampleApp } from '../helpers/sample-app.js';
 
@@ -18,6 +19,7 @@ interface RunOptions {
   readonly intensity: Intensity;
   readonly budgetMs?: number;
   readonly now?: () => number;
+  readonly seed?: number;
 }
 
 async function run(app: SampleApp, options: RunOptions): Promise<FaultRunResult> {
@@ -31,6 +33,7 @@ async function run(app: SampleApp, options: RunOptions): Promise<FaultRunResult>
     testDeadlineMs: DEADLINE_MS,
     vitestNode,
     ...(options.now === undefined ? {} : { now: options.now }),
+    ...(options.seed === undefined ? {} : { seed: options.seed }),
   });
 }
 
@@ -99,6 +102,26 @@ describe('fault run on the sample app', () => {
       expect(result.skipped.map((entry) => [entry.site.file, entry.reason])).toEqual([['src/telemetry.ts', 'over-cap']]);
     },
     TIMEOUT_MS,
+  );
+
+  it(
+    'lets the seed pick among call sites of equal severity over the cap',
+    async () => {
+      const all = await run(app, { intensity: 2 });
+      const sites = all.results.map((entry) => entry.site);
+      const expected = (seed: number) => selectCallSites(sites, PRESETS[1], seed);
+      const seed = Array.from({ length: 50 }, (_, index) => index).find(
+        (candidate) => expected(candidate).skipped.map(({ site }) => site.file).join() !== 'src/telemetry.ts',
+      );
+      expect(seed).toBeDefined();
+      const result = await run(app, { intensity: 1, seed: seed ?? 0 });
+      const selection = expected(seed ?? 0);
+      expect(result.results.map((entry) => entry.site.key)).toEqual(selection.planned.map(({ site }) => site.key));
+      expect(result.skipped.map((entry) => [entry.site.key, entry.reason])).toEqual(
+        selection.skipped.map(({ site, reason }) => [site.key, reason]),
+      );
+    },
+    TIMEOUT_MS * 2,
   );
 
   it(

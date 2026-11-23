@@ -37,6 +37,7 @@ function mutantFinding(mutant: MutantRecord): Finding | null {
       endLine: mutant.end.line,
       endColumn: mutant.end.column,
       coveredBy: mutant.coveredBy,
+      statement: null,
     },
     fault: null,
   };

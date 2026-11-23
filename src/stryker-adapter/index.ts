@@ -45,6 +45,8 @@ export interface MutationRequest {
   readonly onWorkerMessage?: (message: WorkerMessage) => void;
   /** Receives what Stryker and the target's tests write to stdout and stderr; it is discarded without one. */
   readonly onTargetOutput?: (text: string) => void;
+  /** Orders files of equal prior across batches, which decides what a short budget leaves untested. */
+  readonly seed?: number;
 }
 
 /** dry-run-failed: the target's own tests failed or errored with no mutant active, so no mutant was judged. */
@@ -280,7 +282,7 @@ function failedTypeCheck(run: BatchRun): boolean {
 
 export async function runMutation(request: MutationRequest): Promise<MutationResult> {
   const preset = PRESETS[request.intensity];
-  const batches = planBatches(request.ranges, preset.maxBatches);
+  const batches = planBatches(request.ranges, preset.maxBatches, request.seed);
   const clock = request.clock ?? realClock;
   const budget = startBudget(request.budgetMs, () => clock.now());
   const configFile = path.join(ensureWorkDir(request.targetRoot), EMPTY_CONFIG_FILE);

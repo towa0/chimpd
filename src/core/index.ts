@@ -26,5 +26,6 @@ export { decideIgnoreStatic, excludedMutators, PRESETS, STRYKER_MUTATORS } from 
 export type { MutatorName, Preset, StaticDecision, StaticDecisionInput } from './presets.js';
 export { MAX_PRIOR, priorOf, SENSITIVE_PRIOR, STORAGE_PRIOR, tokenize } from '../severity/prior.js';
 export { countLines, mergeRangesByFile, rangeForLine } from './scope.js';
+export { isValidSeed, MAX_SEED, seedError, seededOrder } from './seeded.js';
 export type { LineInterval } from './scope.js';
 export { ensureWorkDir, removeTree, WORK_DIR_NAME } from './workdir.js';

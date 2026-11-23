@@ -1,4 +1,4 @@
-import { countLines, mergeRangesByFile, type LineInterval, type ScopeRange } from '../core/index.js';
+import { countLines, mergeRangesByFile, seededOrder, type LineInterval, type ScopeRange } from '../core/index.js';
 import { priorOf } from '../severity/index.js';
 
 export interface BatchFile {
@@ -16,13 +16,14 @@ function linesOf(files: readonly BatchFile[]): number {
 }
 
 /**
- * Orders files by severity prior, then path, and cuts that order into at most `maxBatches`
- * contiguous groups of roughly equal scoped line counts.
+ * Orders files by severity prior, then by the seed (by path without one), and cuts that order into
+ * at most `maxBatches` contiguous groups of roughly equal scoped line counts.
  */
-export function planBatches(ranges: readonly ScopeRange[], maxBatches: number): Batch[] {
+export function planBatches(ranges: readonly ScopeRange[], maxBatches: number, seed?: number): Batch[] {
+  const tieBreak = seededOrder(seed);
   const files: BatchFile[] = [...mergeRangesByFile(ranges)]
     .map(([file, intervals]) => ({ file, intervals }))
-    .sort((a, b) => priorOf(b.file) - priorOf(a.file) || (a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
+    .sort((a, b) => priorOf(b.file) - priorOf(a.file) || tieBreak(a.file, b.file));
 
   const batchCount = Math.min(maxBatches, files.length);
   const batches: Batch[] = [];

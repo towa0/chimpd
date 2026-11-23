@@ -212,6 +212,33 @@ describe('source boundary', () => {
     expect(boundary(dir, ['test/a.test.ts'], 2, 10).truncated).toBe(0);
   });
 
+  it('keeps the more sensitive file of equal distance when the cap bites, whatever the seed', () => {
+    const dir = project({
+      'test/a.test.ts': "import '../src/a.js';\nimport '../src/b.js';\nimport '../src/payments/refund.js';\n",
+      'src/a.ts': 'export const a = 1;\n',
+      'src/b.ts': 'export const b = 1;\n',
+      'src/payments/refund.ts': 'export const refund = 1;\n',
+    });
+    for (let seed = 0; seed < 20; seed += 1) {
+      const result = computeBoundary({ targetRoot: dir, changedTestFiles: ['test/a.test.ts'], depth: 1, fileCap: 2, seed });
+      expect(result.files[0]?.file).toBe('src/payments/refund.ts');
+      expect(result.truncated).toBe(1);
+    }
+    expect(files(boundary(dir, ['test/a.test.ts'], 1, 1))).toEqual([['src/payments/refund.ts', 1]]);
+  });
+
+  it('picks the same files of equal distance over the cap for the same seed, and others for other seeds', () => {
+    const many = Object.fromEntries(Array.from({ length: 8 }, (_, index) => [`src/f${index}.ts`, `export const f${index} = 1;\n`]));
+    const imports = Object.keys(many).map((file) => `import '../${file.replace(/\.ts$/, '.js')}';`).join('\n');
+    const dir = project({ 'test/a.test.ts': `${imports}\n`, ...many });
+    const picked = (seed: number): string =>
+      computeBoundary({ targetRoot: dir, changedTestFiles: ['test/a.test.ts'], depth: 1, fileCap: 3, seed })
+        .files.map((entry) => entry.file)
+        .join(',');
+    expect(picked(4)).toBe(picked(4));
+    expect(new Set([0, 1, 2, 3, 4, 5].map(picked)).size).toBeGreaterThan(1);
+  });
+
   it('turns the boundary into whole-file ranges', () => {
     const dir = project(chain);
     expect(boundaryRanges(dir, boundary(dir, ['test/a.test.ts'], 1))).toEqual([

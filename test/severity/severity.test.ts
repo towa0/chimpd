@@ -38,6 +38,7 @@ describe('severity scale', () => {
       'abort-mishandled',
       'survived',
       'timeout-exceeds-budget',
+      'invalid-ignore',
       'no-coverage',
       'fire-and-forget',
     ]);

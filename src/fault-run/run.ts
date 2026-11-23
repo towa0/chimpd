@@ -21,6 +21,8 @@ export interface FaultRunRequest {
   readonly now?: () => number;
   /** Receives what the target's own tests write to stdout and stderr; it is discarded without one. */
   readonly onTargetOutput?: (text: string) => void;
+  /** Picks among call sites and tests of equal rank when the caps force a choice. */
+  readonly seed?: number;
 }
 
 export const DEFAULT_TEST_DEADLINE_MS = 2000;
@@ -54,7 +56,7 @@ export async function runFaults(request: FaultRunRequest): Promise<FaultRunResul
     };
   }
 
-  const selection = selectCallSites(discovery.sites, PRESETS[request.intensity]);
+  const selection = selectCallSites(discovery.sites, PRESETS[request.intensity], request.seed);
   const results: CallSiteResult[] = [];
   const skipped: SkippedCallSite[] = [...selection.skipped];
   let outOfBudget = false;
