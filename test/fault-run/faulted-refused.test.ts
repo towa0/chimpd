@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as vitestNode from 'vitest/node';
+import type { ScopeRange } from '../../src/core/index.js';
 import { scopeDiff } from '../../src/diff-scoper/index.js';
 import { pristineFingerprints, type Fingerprints } from '../../src/fault-recon/conflicts.js';
 import { discoverCallSites } from '../../src/fault-run/discover.js';
@@ -18,8 +19,17 @@ beforeAll(async () => {
   pristine = await pristineFingerprints();
 });
 
+const scopes = new WeakMap<SampleApp, readonly ScopeRange[]>();
+
+function rangesOf(app: SampleApp): readonly ScopeRange[] {
+  const ranges = scopes.get(app);
+  if (ranges === undefined) throw new Error('discover the app before faulting it');
+  return ranges;
+}
+
 async function discover(app: SampleApp): Promise<Discovery> {
   const scope = await scopeDiff({ repoRoot: app.dir, mode: 'enclosing-functions' });
+  scopes.set(app, scope.ranges);
   return discoverCallSites({ targetRoot: app.dir, configFile: path.join(app.dir, 'vitest.config.ts'), ranges: scope.ranges, vitestNode, pristine });
 }
 
@@ -38,6 +48,7 @@ function refuse(app: SampleApp, site: CallSite): Promise<SiteRun> {
     pristine,
     site,
     tests: site.reachedBy,
+    ranges: rangesOf(app),
     deadlineMs: DEADLINE_MS,
     kind: 'connection-refused',
   });

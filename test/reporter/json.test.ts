@@ -61,7 +61,7 @@ const FINDING_FIELDS: Readonly<Record<string, Shape>> = {
     }),
   ),
   fault: nullable(
-    fields({ kind: oneOf('blackhole', 'http-500', 'malformed-json', 'connection-refused'), verdict: 'string', path: oneOf('fetch', 'http'), tests: list('string') }),
+    fields({ kind: oneOf('blackhole', 'http-500', 'malformed-json', 'connection-refused'), verdict: 'string', path: oneOf('fetch', 'http'), tests: list('string'), reachedFrom: list('string'), notFaultedFrom: list('string') }),
   ),
 };
 
@@ -102,6 +102,19 @@ const SCHEMA_V1: Shape = fields({
       detail: nullable('string'),
       budgetMs: 'number',
       spentMs: 'number',
+      timings: nullable(
+        anyOf(
+          fields({
+            batchesStarted: 'number',
+            strykerStartMs: 'number',
+            dryRunNetMs: 'number',
+            mutantsMs: 'number',
+            mutantsRun: 'number',
+            msPerMutant: nullable('number'),
+          }),
+          fields({ discoveryMs: nullable('number'), faultRuns: 'number', faultRunsMs: 'number', msPerFaultRun: nullable('number') }),
+        ),
+      ),
     }),
   ),
   findings: list(fields(FINDING_FIELDS)),
@@ -110,6 +123,7 @@ const SCHEMA_V1: Shape = fields({
   coverage: fields({
     checked: fields({ mutants: 'number', invalidMutants: 'number', callSites: 'number' }),
     invalid: list(ITEM),
+    notTested: list(fields({ file: 'string', mutants: nullable('number') })),
     skipped: list(ITEM),
     inconclusive: list(ITEM),
     conflicts: list(fields({ testFile: 'string', patched: list('string') })),
@@ -147,6 +161,17 @@ function parsed(result: RunResult): unknown {
 
 const full = runResult({
   status: 'partial',
+  phases: [
+    {
+      name: 'mutation',
+      status: 'budget-exhausted',
+      statusReason: 'the budget ran out before every mutant was tested',
+      budgetMs: 84_000,
+      spentMs: 83_900,
+      timings: { batchesStarted: 1, strykerStartMs: 54_800, dryRunNetMs: 8_500, mutantsMs: 29_000, mutantsRun: 8 },
+    },
+    { name: 'faults', status: 'completed', statusReason: null, budgetMs: 36_000, spentMs: 11_400, timings: { discoveryMs: 11_400, faultRuns: 0, faultRunsMs: 0 } },
+  ],
   scope: {
     mode: 'diff',
     changedSourceFiles: ['src/a.ts'],
@@ -157,6 +182,7 @@ const full = runResult({
   },
   findings: [faultFinding(), mutationFinding({ kind: 'no-coverage', severity: severityOf('no-coverage', 10) })],
   skipped: [{ source: 'mutation', file: 'src/a.ts', line: null, reason: 'mutants never planned: the budget ran out first' }],
+  notTested: [{ file: 'src/a.ts', mutants: null }, { file: 'src/b.ts', mutants: 2 }],
   inconclusive: [{ source: 'fault', file: 'src/a.ts', line: 9, reason: 'the test did not reach the call site under the fault', faultKind: 'connection-refused' }],
   conflicts: [{ testFile: 'test/n.test.ts', patched: ['fetch'] }],
   invalid: [{ source: 'mutation', file: 'src/a.ts', line: 6, reason: 'compile error: src/a.ts(6,3): error TS2322: Type mismatch.' }],
@@ -209,10 +235,19 @@ describe('JSON report schema', () => {
     expect(toJsonReport(full, { strict: true })).toMatchObject({ exitCode: 2, strict: true });
   });
 
+  it('gives each phase the breakdown of where its time went', () => {
+    expect(toJsonReport(full).phases.map((entry) => entry.timings)).toEqual([
+      { batchesStarted: 1, strykerStartMs: 54_800, dryRunNetMs: 8_500, mutantsMs: 29_000, mutantsRun: 8, msPerMutant: 3625 },
+      { discoveryMs: 11_400, faultRuns: 0, faultRunsMs: 0, msPerFaultRun: null },
+    ]);
+    expect(toJsonReport(runResult()).phases.map((entry) => entry.timings)).toEqual([null, null]);
+  });
+
   it('lists what was checked and every gap in the coverage section', () => {
     expect(toJsonReport(full).coverage).toEqual({
       checked: { mutants: 12, invalidMutants: 0, callSites: 3 },
       invalid: [{ source: 'mutation', file: 'src/a.ts', line: 6, reason: 'compile error: src/a.ts(6,3): error TS2322: Type mismatch.', faultKind: null }],
+      notTested: [{ file: 'src/a.ts', mutants: null }, { file: 'src/b.ts', mutants: 2 }],
       skipped: [{ source: 'mutation', file: 'src/a.ts', line: null, reason: 'mutants never planned: the budget ran out first', faultKind: null }],
       inconclusive: [{ source: 'fault', file: 'src/a.ts', line: 9, reason: 'the test did not reach the call site under the fault', faultKind: 'connection-refused' }],
       conflicts: [{ testFile: 'test/n.test.ts', patched: ['fetch'] }],
@@ -225,7 +260,14 @@ describe('JSON report schema', () => {
       ['hang-no-timeout', 70],
       ['no-coverage', 55],
     ]);
-    expect(report.findings[0]?.fault).toEqual({ kind: 'blackhole', verdict: 'hang', path: 'http', tests: ['test/ledger.test.ts > posts a ledger entry'] });
+    expect(report.findings[0]?.fault).toEqual({
+      kind: 'blackhole',
+      verdict: 'hang',
+      path: 'http',
+      tests: ['test/ledger.test.ts > posts a ledger entry'],
+      reachedFrom: [],
+      notFaultedFrom: [],
+    });
     expect(report.findings[1]?.mutation).toMatchObject({ replacement: 'orderTotal > 120', coveredBy: ['test/discount.test.ts#applies'] });
   });
 
@@ -266,8 +308,8 @@ describe('JSON report schema', () => {
       }),
     );
     expect(report.phases).toEqual([
-      { name: 'mutation', status: 'error', statusReason: 'mutation batch 0 failed: boom', detail: stack, budgetMs: 83_668, spentMs: 22_001 },
-      { name: 'faults', status: 'completed', statusReason: null, detail: null, budgetMs: 100_463, spentMs: 1_861 },
+      { name: 'mutation', status: 'error', statusReason: 'mutation batch 0 failed: boom', detail: stack, budgetMs: 83_668, spentMs: 22_001, timings: null },
+      { name: 'faults', status: 'completed', statusReason: null, detail: null, budgetMs: 100_463, spentMs: 1_861, timings: null },
     ]);
     expect(report.spentMs).toBe(45_251);
     expect(report.budgetMs).toBe(120_000);

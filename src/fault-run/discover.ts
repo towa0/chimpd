@@ -1,12 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { toPosix, type ScopeRange } from '../core/index.js';
-import { callSiteKey, projectFrames, type ProjectFrame } from '../fault-recon/call-site.js';
+import { callSiteKey, projectFrames, scopedFrame, type ProjectFrame } from '../fault-recon/call-site.js';
 import { patchedBeforeTestsReason, pristineFingerprints, type Fingerprints } from '../fault-recon/conflicts.js';
 import type { VitestNodeModule } from '../fault-recon/index.js';
 import { priorOf } from '../severity/index.js';
 import { runInstrumented, type TestRecord } from './instrumented.js';
-import { scopeOf } from './select.js';
 import type { CallSite, Discovery, FileConflict, ReachingTest } from './types.js';
 
 export interface DiscoveryRequest {
@@ -27,6 +26,11 @@ function enclosingFunctionName(frames: readonly ProjectFrame[]): string | null {
   return frames.find((frame) => frame.file === file && frame.functionName !== null)?.functionName ?? null;
 }
 
+function callerLabel(frames: readonly ProjectFrame[], from: ProjectFrame): string {
+  const name = enclosingFunctionName(frames.slice(frames.indexOf(from)));
+  return name === null ? `${from.file}:${from.line}` : `${from.file} ${name}`;
+}
+
 interface SiteBuilder {
   readonly innermost: ProjectFrame;
   readonly functionName: string | null;
@@ -34,6 +38,8 @@ interface SiteBuilder {
   readonly range: ScopeRange;
   readonly frames: Map<string, ProjectFrame>;
   readonly callsByTest: Map<string, number>;
+  readonly callersByTest: Map<string, Set<string>>;
+  readonly callers: Set<string>;
   unattributedCalls: number;
 }
 
@@ -111,8 +117,9 @@ export async function discoverCallSites(request: DiscoveryRequest): Promise<Disc
     const innermost = frames[0];
     if (innermost === undefined) continue;
     const key = callSiteKey(innermost);
-    const range = scopeOf(frames, ranges);
-    if (range === null) {
+    // Calls that reach the site only through unchanged code are not the change's calls, so they count for nothing.
+    const scoped = scopedFrame(frames, ranges);
+    if (scoped === null) {
       outOfScope.add(key);
       continue;
     }
@@ -120,20 +127,28 @@ export async function discoverCallSites(request: DiscoveryRequest): Promise<Disc
       innermost,
       functionName: enclosingFunctionName(frames),
       path: event.path,
-      range,
+      range: scoped.range,
       frames: new Map<string, ProjectFrame>(),
       callsByTest: new Map<string, number>(),
+      callersByTest: new Map<string, Set<string>>(),
+      callers: new Set<string>(),
       unattributedCalls: 0,
     };
     builders.set(key, builder);
     for (const frame of frames) builder.frames.set(callSiteKey(frame), frame);
+    const caller = scoped.frame === innermost ? null : callerLabel(frames, scoped.frame);
+    if (caller !== null) builder.callers.add(caller);
 
     const test = event.testId === null ? undefined : tests.get(event.testId);
     if (event.testId === null) builder.unattributedCalls += 1;
     else if (test?.state === 'pass' && !patchedByFile.has(test.file)) {
       builder.callsByTest.set(test.id, (builder.callsByTest.get(test.id) ?? 0) + 1);
+      const callers = builder.callersByTest.get(test.id) ?? new Set<string>();
+      if (caller !== null) callers.add(caller);
+      builder.callersByTest.set(test.id, callers);
     }
   }
+  for (const key of builders.keys()) outOfScope.delete(key);
 
   const sites: CallSite[] = [...builders.entries()]
     .sort(([a], [b]) => compareText(a, b))
@@ -144,7 +159,7 @@ export async function discoverCallSites(request: DiscoveryRequest): Promise<Disc
           const durationMs = durations.get(id);
           return test === undefined || durationMs === undefined
             ? []
-            : [{ test: { id, file: test.file, name: test.name }, durationMs, calls }];
+            : [{ test: { id, file: test.file, name: test.name }, durationMs, calls, reachedFrom: [...(builder.callersByTest.get(id) ?? [])].sort() }];
         })
         .sort(
           (a, b) =>
@@ -161,6 +176,7 @@ export async function discoverCallSites(request: DiscoveryRequest): Promise<Disc
         functionName: builder.functionName,
         path: builder.path,
         frames: [...builder.frames.values()],
+        reachedFrom: [...builder.callers].sort(),
         scopeKind: builder.range.kind,
         prior: priorOf(innermost.file, builder.functionName ?? ''),
         reachedBy,

@@ -97,6 +97,10 @@ describe('fault run on the sample app', () => {
       expect(result.skipped).toEqual([]);
       expect(result.conflicts).toEqual([{ testFile: 'test/notifications.test.ts', patched: ['fetch'] }]);
       expect(result.spentMs).toBeGreaterThan(0);
+      expect(result.timings.faultRuns).toBe(8);
+      expect(result.timings.discoveryMs).toBeGreaterThan(0);
+      expect(result.timings.faultRunsMs).toBeGreaterThan(0);
+      expect((result.timings.discoveryMs ?? 0) + result.timings.faultRunsMs).toBeLessThanOrEqual(result.spentMs + 1);
       expect(workDirEntries(app)).toEqual(['.gitignore']);
       expect((await scopeDiff({ repoRoot: app.dir, mode: 'enclosing-functions' })).dirty).toBe(false);
     },

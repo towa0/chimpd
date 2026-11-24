@@ -14,6 +14,7 @@ import {
 } from '../../src/orchestrator/index.js';
 import { renderText } from '../../src/reporter/index.js';
 import type { MutationRequest } from '../../src/stryker-adapter/index.js';
+import { readTimings } from '../../src/timings/index.js';
 import { batch, faultRun, mutant, mutationResult, site, siteResult } from '../helpers/run-fixtures.js';
 import { createTempRepo, type TempRepo } from '../helpers/temp-repo.js';
 
@@ -255,9 +256,18 @@ describe('budget exhaustion', () => {
       { source: 'mutation', file: 'src/a.ts', line: 2, reason: 'not tested: budget' },
       { source: 'mutation', file: 'src/b.ts', line: null, reason: 'mutants never planned: the budget ran out first' },
     ]);
+    expect(result.notTested).toEqual([
+      { file: 'src/a.ts', mutants: 1 },
+      { file: 'src/b.ts', mutants: null },
+    ]);
     expect(result.checked).toEqual({ mutants: 1, invalidMutants: 0, callSites: 0 });
     expect(result.status).toBe('partial');
     expect(exits(result)).toEqual([0, 2]);
+    const text = renderText(result);
+    expect(text).toContain(
+      '  NOT CHECKED: 1 generated mutant not tested and the mutants of 1 file never planned before the budget ran out: src/a.ts (1), src/b.ts (never planned)',
+    );
+    expect(text).toContain('Result: 0 findings, coverage partial: 2 not checked, listed above (exit 0; 2 with --strict)');
   });
 
   it('reports a batch stopped at twice its share as budget-exhausted and the run as partial', async () => {
@@ -269,6 +279,27 @@ describe('budget exhaustion', () => {
     expect(phase(result, 'mutation')?.status).toBe('budget-exhausted');
     expect(result.status).toBe('partial');
     expect(exits(result)).toEqual([0, 2]);
+    expect(renderText(result)).toContain(
+      'Result: 0 findings, coverage partial: the mutation phase ended budget-exhausted (exit 0; 2 with --strict)',
+    );
+  });
+
+  it('counts invalid mutants in the Result line of a partial run', async () => {
+    const repo = changedRepo();
+    const invalid = mutant({ status: 'CompileError', statusReason: 'src/a.ts(2,3): error TS2322: nope' });
+    const untested = mutant({ start: { line: 2, column: 9 }, status: 'NotTested', statusReason: 'not tested: budget' });
+    const run = harness(repo, {
+      runMutation: () =>
+        Promise.resolve(
+          mutationResult({
+            mutants: [killed, invalid, untested],
+            batches: [batch({ outcome: 'killed-budget' })],
+            notTested: { reason: 'budget', mutants: 1, unplannedFiles: [] },
+          }),
+        ),
+    });
+    const result = await runChimpd(run.options());
+    expect(renderText(result)).toContain('Result: 0 findings, coverage partial: 1 not checked, 1 invalid, listed above (exit 0; 2 with --strict)');
   });
 
   it('lists every file the fault phase never got to when mutation spent the whole budget', async () => {
@@ -749,6 +780,95 @@ describe('verdict honesty', () => {
     expect(result).toMatchObject({ status: 'completed', skipped: [] });
   });
 
+  it('says so when the changed code reaches no outgoing call, instead of showing 0 call sites silently', async () => {
+    const repo = changedRepo();
+    const run = harness(repo, { runMutation: () => Promise.resolve(mutationResult({ mutants: [killed] })) });
+    const result = await runChimpd(run.options());
+    expect(result.status).toBe('completed');
+    expect(phase(result, 'faults')).toMatchObject({
+      status: 'completed',
+      statusReason: 'the changed code reached no outgoing call in the tests related to it, directly or through other code',
+    });
+    expect(renderText(result)).toContain(
+      [
+        'Coverage: 1 mutant and 0 call sites checked',
+        '  nothing in scope was left unchecked',
+        '  no call site to fault: the changed code reached no outgoing call in the tests related to it, directly or through other code',
+      ].join('\n'),
+    );
+  });
+
+  it('keeps the fault phase reason empty when it faulted a site', async () => {
+    const repo = changedRepo();
+    const run = harness(repo, {
+      runMutation: () => Promise.resolve(mutationResult({ mutants: [killed] })),
+      runFaults: () => Promise.resolve(faultRun({ results: [siteResult()] })),
+    });
+    const result = await runChimpd(run.options());
+    expect(phase(result, 'faults')).toMatchObject({ status: 'completed', statusReason: null });
+  });
+
+  it('counts a changed call as reached when discovery saw it as a caller frame of a wrapper site', async () => {
+    const repo = changedRepo({ changedSource: FETCH_SOURCE });
+    const wrapper = site({
+      key: 'src/client.ts:3:10',
+      file: 'src/client.ts',
+      line: 3,
+      frames: [
+        { file: 'src/client.ts', line: 3, column: 10, functionName: 'request' },
+        { file: 'src/a.ts', line: 6, column: 10, functionName: 'load' },
+      ],
+      reachedFrom: ['src/a.ts load'],
+    });
+    const run = harness(repo, {
+      runMutation: () => Promise.resolve(mutationResult({ mutants: [killed] })),
+      runFaults: () => Promise.resolve(faultRun({ results: [siteResult({ site: wrapper })] })),
+    });
+    const result = await runChimpd(run.options());
+    expect(result).toMatchObject({ status: 'completed', skipped: [] });
+  });
+
+  it('names the changed callers of a wrapper site on its finding and on its gaps', async () => {
+    const repo = changedRepo();
+    const loads = { id: 't1', file: 'test/a.test.ts', name: 'loads' };
+    const reachedBy = [
+      { test: loads, durationMs: 5, calls: 1, reachedFrom: ['src/a.ts total'] },
+      { test: { id: 't2', file: 'test/b.test.ts', name: 'saves' }, durationMs: 9, calls: 1, reachedFrom: ['src/b.ts save'] },
+    ];
+    const wrapper = site({ key: 'src/client.ts:3:10', file: 'src/client.ts', line: 3, functionName: 'request', reachedFrom: ['src/a.ts total', 'src/b.ts save'], reachedBy });
+    const run = harness(repo, {
+      runMutation: () => Promise.resolve(mutationResult({ mutants: [killed] })),
+      runFaults: () =>
+        Promise.resolve(
+          faultRun({
+            status: 'budget-exhausted',
+            statusReason: 'the budget ran out before every call site was faulted',
+            results: [
+              siteResult({
+                site: wrapper,
+                verdict: 'hang',
+                findingKind: 'hang-no-timeout',
+                reason: 'the call has no timeout of its own',
+                tests: [{ test: loads, observations: [], injected: null, problem: null }],
+              }),
+            ],
+            skipped: [{ site: wrapper, kind: 'http-500', reason: 'budget' }],
+          }),
+        ),
+    });
+    const result = await runChimpd(run.options());
+    expect(result.findings[0]?.fault).toMatchObject({ reachedFrom: ['src/a.ts total'], notFaultedFrom: ['src/b.ts save'] });
+    expect(result.skipped).toContainEqual({
+      source: 'fault',
+      file: 'src/client.ts',
+      line: 3,
+      reason: 'not faulted: the budget ran out first; reached from changed code: src/a.ts total, src/b.ts save',
+      faultKind: 'http-500',
+    });
+    const text = renderText(result);
+    expect(text).toContain('    reached from changed code: src/a.ts total\n    also reached from src/b.ts save, not faulted at this level');
+  });
+
   it('is inconclusive when the only things in scope are invalid mutants and an unreached call', async () => {
     const repo = changedRepo({ changedSource: FETCH_SOURCE });
     const run = harness(repo, { runMutation: () => Promise.resolve(mutationResult({ mutants: [compileError(6)] })) });
@@ -847,6 +967,40 @@ describe('error reporting', () => {
       line: null,
       reason: 'not faulted: the fault phase failed: boom from config',
     });
+  });
+
+  it('reports where each phase spent its time and records it for the plan', async () => {
+    const repo = changedRepo();
+    const mutationTimings = { batchesStarted: 1, strykerStartMs: 54_800, dryRunNetMs: 8_500, mutantsMs: 29_000, mutantsRun: 8 };
+    const faultTimings = { discoveryMs: 11_400, faultRuns: 2, faultRunsMs: 6_000 };
+    const run = harness(repo, {
+      runMutation: () => Promise.resolve(mutationResult({ mutants: [killed], timings: mutationTimings })),
+      runFaults: () => Promise.resolve(faultRun({ results: [siteResult()], timings: faultTimings })),
+    });
+    const result = await runChimpd(run.options());
+    expect(phase(result, 'mutation')?.timings).toEqual(mutationTimings);
+    expect(phase(result, 'faults')?.timings).toEqual(faultTimings);
+    expect(renderText(result)).toContain(
+      [
+        '    Stryker start and dry run 54.8 s (the tests 8.5 s of it), 8 mutants run in 29.0 s, 3.6 s each',
+        '  faults completed 0.0 s of 120.0 s',
+        '    discovery run 11.4 s, 2 faulted runs in 6.0 s, 3.0 s each',
+      ].join('\n'),
+    );
+    const recorded = readTimings(repo.dir);
+    expect(recorded).toEqual([{ at: expect.any(String) as string, level: 'poke', mutation: mutationTimings, faults: faultTimings }]);
+    expect(repo.git('status', '--porcelain')).toBe('');
+  });
+
+  it('records no timings when no phase ran', async () => {
+    const repo = track(createTempRepo());
+    repo.write('README.md', 'docs\n');
+    repo.branch('origin/main', repo.commit('Base'));
+    repo.write('README.md', 'more docs\n');
+    repo.commit('Docs');
+    const result = await runChimpd(harness(repo).options());
+    expect(result.status).toBe('nothing-in-scope');
+    expect(readTimings(repo.dir)).toEqual([]);
   });
 
   it('rounds every phase duration to whole milliseconds', async () => {

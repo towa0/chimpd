@@ -3,8 +3,8 @@ import { PRESETS, priorOf, type ScopeRange } from '../../src/core/index.js';
 import { scopeOf, selectCallSites } from '../../src/fault-run/select.js';
 import type { CallSite, ReachingTest } from '../../src/fault-run/types.js';
 
-function reaching(name: string, durationMs: number, file = 'test/a.test.ts'): ReachingTest {
-  return { test: { id: `${file}#${name}`, file, name }, durationMs, calls: 1 };
+function reaching(name: string, durationMs: number, file = 'test/a.test.ts', reachedFrom: readonly string[] = []): ReachingTest {
+  return { test: { id: `${file}#${name}`, file, name }, durationMs, calls: 1, reachedFrom };
 }
 
 function site(file: string, functionName: string, overrides: Partial<CallSite> = {}): CallSite {
@@ -16,6 +16,7 @@ function site(file: string, functionName: string, overrides: Partial<CallSite> =
     functionName,
     path: 'fetch',
     frames: [{ file, line: 3, column: 10, functionName }],
+    reachedFrom: [],
     scopeKind: 'changed',
     prior: priorOf(file, functionName),
     reachedBy: [reaching('reaches it', 5)],
@@ -171,6 +172,31 @@ describe('selectCallSites with a seed', () => {
     expect(picks.size).toBeGreaterThan(1);
   });
 
+  it('faults a shared wrapper from each changed caller the test cap allows before taking cheaper tests of a covered caller', () => {
+    const wrapper = site('src/client.ts', 'request', {
+      reachedFrom: ['src/a.ts load', 'src/b.ts save'],
+      reachedBy: [
+        reaching('loads quickly', 1, 'test/a.test.ts', ['src/a.ts load']),
+        reaching('loads again', 2, 'test/a.test.ts', ['src/a.ts load']),
+        reaching('saves', 9, 'test/b.test.ts', ['src/b.ts save']),
+      ],
+    });
+    const [planned] = selectCallSites([wrapper], { maxFaultedCallSites: 3, testsPerCallSite: 2 }, 5).planned;
+    expect(planned?.tests.map(({ test }) => test.name)).toEqual(['loads quickly', 'saves']);
+    const [one] = selectCallSites([wrapper], { maxFaultedCallSites: 3, testsPerCallSite: 1 }, 5).planned;
+    expect(one?.tests.map(({ test }) => test.name)).toEqual(['loads quickly']);
+  });
+
+  it('counts a wrapper that several changed callers share as one site against the cap', () => {
+    const sites = [
+      site('src/client.ts', 'request', { reachedFrom: ['src/a.ts load', 'src/b.ts save'] }),
+      site('src/c.ts', 'call'),
+    ];
+    const selection = selectCallSites(sites, { maxFaultedCallSites: 2, testsPerCallSite: 1 }, 5);
+    expect(keys(selection.planned).toSorted()).toEqual(['src/c.ts', 'src/client.ts']);
+    expect(selection.skipped).toEqual([]);
+  });
+
   it('still sets aside unattributable and unreached sites with a seed', () => {
     const orphan = site('src/orphan.ts', 'call', { reachedBy: [] });
     const warm = site('src/warmup.ts', 'warm', { reachedBy: [], unattributedCalls: 1 });
@@ -192,10 +218,18 @@ describe('scopeOf', () => {
     expect(scopeOf(frames, ranges)).toEqual(ranges[0]);
   });
 
-  it('rejects a site that only a caller frame puts in scope', () => {
+  it('accepts a call outside the scope that a changed caller frame reaches, by the caller range', () => {
     const frames = [
       { file: 'src/a.ts', line: 9, column: 10, functionName: 'call' },
       { file: 'src/caller.ts', line: 5, column: 3, functionName: 'caller' },
+    ];
+    expect(scopeOf(frames, ranges)).toEqual(ranges[1]);
+  });
+
+  it('rejects a call with no project frame in any range', () => {
+    const frames = [
+      { file: 'src/a.ts', line: 9, column: 10, functionName: 'call' },
+      { file: 'src/other.ts', line: 5, column: 3, functionName: 'other' },
     ];
     expect(scopeOf(frames, ranges)).toBeNull();
   });

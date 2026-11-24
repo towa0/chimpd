@@ -1,11 +1,10 @@
-import { rangeForLine, seededOrder, type Preset, type ScopeRange } from '../core/index.js';
-import type { ProjectFrame } from '../fault-recon/call-site.js';
+import { seededOrder, type Preset, type ScopeRange } from '../core/index.js';
+import { scopedFrame, type ProjectFrame } from '../fault-recon/call-site.js';
 import type { CallSite, ReachingTest, SkippedCallSite } from './types.js';
 
-/** The scope range that makes a call site eligible, decided by its innermost project frame. */
+/** The scope range that makes a call eligible: the one around the innermost project frame that lies in any range. */
 export function scopeOf(frames: readonly ProjectFrame[], ranges: readonly ScopeRange[]): ScopeRange | null {
-  const innermost = frames[0];
-  return innermost === undefined ? null : rangeForLine(ranges, innermost.file, innermost.line);
+  return scopedFrame(frames, ranges)?.range ?? null;
 }
 
 export type SelectionLimits = Pick<Preset, 'maxFaultedCallSites' | 'testsPerCallSite'>;
@@ -27,6 +26,26 @@ function testId(entry: ReachingTest): string {
   return `${entry.test.file}\0${entry.test.name}`;
 }
 
+/**
+ * The cheapest tests, except that a test through a changed caller no picked test goes through comes
+ * before a cheaper one through callers already covered, so a shared wrapper is faulted from each caller the cap allows.
+ */
+function pickTests(cheapestFirst: readonly ReachingTest[], limit: number): ReachingTest[] {
+  const picked = new Set<ReachingTest>();
+  const covered = new Set<string>();
+  for (const entry of cheapestFirst) {
+    if (picked.size >= limit) break;
+    if (!entry.reachedFrom.some((caller) => !covered.has(caller))) continue;
+    picked.add(entry);
+    for (const caller of entry.reachedFrom) covered.add(caller);
+  }
+  for (const entry of cheapestFirst) {
+    if (picked.size >= limit) break;
+    picked.add(entry);
+  }
+  return cheapestFirst.filter((entry) => picked.has(entry));
+}
+
 /** Without a seed, ties fall back to key order for sites and to file, then name, for tests. */
 export function selectCallSites(sites: readonly CallSite[], limits: SelectionLimits, seed?: number): Selection {
   const tieBreak = seededOrder(seed);
@@ -43,7 +62,7 @@ export function selectCallSites(sites: readonly CallSite[], limits: SelectionLim
 
   const planned = reachable.slice(0, limits.maxFaultedCallSites).map((site) => ({
     site,
-    tests: site.reachedBy.toSorted(byCost).slice(0, limits.testsPerCallSite),
+    tests: pickTests(site.reachedBy.toSorted(byCost), limits.testsPerCallSite),
   }));
   for (const site of reachable.slice(limits.maxFaultedCallSites)) skipped.push({ site, kind: null, reason: 'over-cap' });
 

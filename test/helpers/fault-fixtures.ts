@@ -166,3 +166,70 @@ export function addCrashOnFaultModule(repo: TempRepo): void {
   repo.write('src/crash.ts', CRASH_SOURCE);
   repo.write('test/crash.test.ts', CRASH_TEST);
 }
+
+const WRAPPER_SOURCE = [
+  'export async function getJson(url: string): Promise<unknown> {',
+  '  const response = await fetch(url, { signal: AbortSignal.timeout(100) });',
+  '  return response.json();',
+  '}',
+  '',
+].join('\n');
+
+const STATUSES_SOURCE = [
+  "import { getJson } from './http-client.js';",
+  '',
+  'export async function getStatuses(baseUrl: string): Promise<unknown> {',
+  '  try {',
+  '    return await getJson(`${baseUrl}/statuses`);',
+  '  } catch {',
+  '    return null;',
+  '  }',
+  '}',
+  '',
+].join('\n');
+
+const PLACES_SOURCE = [
+  "import { getJson } from './http-client.js';",
+  '',
+  'export function getPlaces(baseUrl: string): Promise<unknown> {',
+  '  return getJson(`${baseUrl}/places`);',
+  '}',
+  '',
+].join('\n');
+
+const WRAPPER_TEST = [
+  "import { afterAll, beforeAll, expect, it } from 'vitest';",
+  "import { getPlaces } from '../src/places.js';",
+  "import { getStatuses } from '../src/statuses.js';",
+  "import { startServer, type TestServer } from './helpers/server.js';",
+  '',
+  'let server: TestServer;',
+  '',
+  'beforeAll(async () => {',
+  "  server = await startServer({ 'GET /statuses': { body: { ok: 'statuses' } }, 'GET /statuses?limit=500': { body: { ok: 'statuses' } }, 'GET /places': { body: { ok: 'places' } } });",
+  '});',
+  'afterAll(() => server.close());',
+  '',
+  "it('loads places', async () => {",
+  "  expect(await getPlaces(server.url)).toEqual({ ok: 'places' });",
+  '});',
+  '',
+  "it('loads statuses and places', async () => {",
+  "  expect(await getPlaces(server.url)).toEqual({ ok: 'places' });",
+  "  expect([{ ok: 'statuses' }, null]).toContainEqual(await getStatuses(server.url));",
+  '});',
+  '',
+].join('\n');
+
+/**
+ * A fetch wrapper in its own unchanged file, called from a changed function and from an unchanged one.
+ * Commits the wrapper as the base, then changes only the line in getStatuses that calls it.
+ */
+export function addWrapperModule(repo: TempRepo): void {
+  repo.write('src/http-client.ts', WRAPPER_SOURCE);
+  repo.write('src/statuses.ts', STATUSES_SOURCE);
+  repo.write('src/places.ts', PLACES_SOURCE);
+  repo.write('test/wrapper.test.ts', WRAPPER_TEST);
+  repo.branch('origin/main', repo.commit('Add a fetch wrapper and its callers'));
+  repo.edit('src/statuses.ts', '`${baseUrl}/statuses`', '`${baseUrl}/statuses?limit=500`');
+}

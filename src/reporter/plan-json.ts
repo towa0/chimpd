@@ -49,12 +49,14 @@ export interface JsonPlan {
     readonly notRun: string | null;
   } | null;
   readonly budget: { readonly totalMs: number; readonly mutationMs: number; readonly faultMs: number };
-  /** A rough estimate from assumed costs, never a measurement; `derivation` says how it was reached. */
+  /** An estimate, never a measurement of this run; `derivation` says how it was reached and which costs were measured before. */
   readonly estimate: {
     readonly isEstimate: true;
     readonly totalMs: number;
     readonly mutationMs: number;
     readonly faultMs: number;
+    /** Whether every cost it used was measured on an earlier run of this project, from .chimpd/timings.json. */
+    readonly calibrated: boolean;
     readonly derivation: readonly string[];
   } | null;
 }
@@ -123,6 +125,7 @@ export function toJsonPlan(plan: RunPlan): JsonPlan {
             totalMs: Math.round(estimate.totalMs),
             mutationMs: Math.round(estimate.mutationMs),
             faultMs: Math.round(estimate.faultMs),
+            calibrated: estimate.calibrated,
             derivation: [...estimate.derivation],
           },
   };

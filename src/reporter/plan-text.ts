@@ -2,6 +2,7 @@ import { firstErrorLine, PRESETS } from '../core/index.js';
 import type { IgnoredReason } from '../diff-scoper/index.js';
 import { LEVELS } from '../orchestrator/index.js';
 import { exitCodeOfPlan, type PlanCall, type RunPlan } from '../plan/index.js';
+import { TIMINGS_FILE } from '../timings/index.js';
 
 const INDENT = '  ';
 const SHORT_SHA = 7;
@@ -95,7 +96,7 @@ function faultSection(plan: RunPlan): string[] {
   ];
   if (faults.calls.length === 0) lines.push(`${INDENT}none`);
   lines.push(...faults.calls.map(callLine));
-  lines.push(`${INDENT}calls through client libraries are only found when a test makes them`);
+  lines.push(`${INDENT}calls made through a wrapper or a client library, in the changed file or another, are found only at run time, when a test makes them`);
   return lines;
 }
 
@@ -109,7 +110,9 @@ function estimateSection(plan: RunPlan): string[] {
   const { estimate } = plan;
   if (estimate === null) return [];
   return [
-    `Estimate (rough, not measured): about ${seconds(estimate.totalMs)}, derived from:`,
+    estimate.calibrated
+      ? `Estimate (from timings measured on earlier runs, in ${TIMINGS_FILE}): about ${seconds(estimate.totalMs)}, derived from:`
+      : `Estimate (uncalibrated: first runs on a project often take several times longer): about ${seconds(estimate.totalMs)}, derived from:`,
     ...estimate.derivation.map((line) => `${INDENT}${line}`),
   ];
 }

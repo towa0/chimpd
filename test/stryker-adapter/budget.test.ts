@@ -111,6 +111,20 @@ describe('budget enforcement', () => {
     expect(result.tests).toEqual([{ id: 'test/a.test.ts#a', name: 'a', file: 'test/a.test.ts' }]);
   });
 
+  it('counts a mutant as not tested only when it is in scope and listed', async () => {
+    const result = await runMutation({
+      targetRoot: repo.dir,
+      ranges: [{ file: 'src/a.ts', startLine: 1, endLine: 1, kind: 'changed', staticRegion: false }],
+      intensity: 1,
+      ignoreStatic: true,
+      budgetMs: 1200,
+      workerEntry: fakeWorker,
+    });
+    expect(result.mutants).toEqual([]);
+    expect(result.outOfScope).toBe(3);
+    expect(result.notTested).toEqual({ reason: 'budget', mutants: 0, unplannedFiles: [] });
+  });
+
   it('kills the whole process tree, including processes the batch started', async () => {
     await runMutation({
       targetRoot: repo.dir,
@@ -164,6 +178,8 @@ describe('budget enforcement', () => {
       onWorkerMessage: killOnResult(clock),
     });
     expect(result.batches).toMatchObject([{ outcome: 'killed-budget', planned: 3, tested: 1, elapsedMs: 3_600_000 }]);
+    expect(result.batches[0]).toMatchObject({ strykerStartMs: 0, mutantsMs: 3_600_000, mutantsRun: 1 });
+    expect(result.timings).toEqual({ batchesStarted: 1, strykerStartMs: 0, dryRunNetMs: 5, mutantsMs: 3_600_000, mutantsRun: 1 });
     expect(await waitUntilDead(grandchildren())).toBe(true);
   });
 
@@ -208,6 +224,7 @@ describe('budget enforcement', () => {
       workerEntry: fakeWorker,
     });
     expect(result.batches.map((batch) => batch.outcome)).toEqual(['not-launched', 'not-launched']);
+    expect(result.timings).toEqual({ batchesStarted: 0, strykerStartMs: 0, dryRunNetMs: 0, mutantsMs: 0, mutantsRun: 0 });
     expect(result.mutants).toEqual([]);
     expect(result.notTested.unplannedFiles).toEqual(['src/a.ts', 'src/b.ts']);
     expect(grandchildren()).toEqual([]);

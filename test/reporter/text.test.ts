@@ -345,7 +345,7 @@ describe('fault kinds in the text report', () => {
           faultFinding({
             kind: 'refusal-mishandled',
             message: 'the test failed after the connection was refused',
-            fault: { kind: 'connection-refused', verdict: 'refusal-mishandled', path: 'fetch', tests: ['test/a.test.ts > loads'] },
+            fault: { kind: 'connection-refused', verdict: 'refusal-mishandled', path: 'fetch', tests: ['test/a.test.ts > loads'], reachedFrom: [], notFaultedFrom: [] },
           }),
         ],
         inconclusive: [{ source: 'fault', file: 'src/a.ts', line: 9, reason: 'the test did not reach the call site under the fault', faultKind: 'connection-refused' }],

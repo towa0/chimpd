@@ -35,12 +35,13 @@ import {
 import { findVitestConfig, missingConfigMessage } from '../orchestrator/target.js';
 import { planBatches } from '../stryker-adapter/index.js';
 import { computeBoundary, type Boundary, type BoundaryOptions } from '../test-only-scoper/index.js';
+import { calibrate, readTimings, type Calibration, type RunTimings } from '../timings/index.js';
 import { countMutants, type MutantCount, type MutantCountRequest } from './mutants.js';
 
 export { countMutants } from './mutants.js';
 export type { MutantCount, MutantCountRequest } from './mutants.js';
 
-/** Assumed costs behind the time estimate; none of them is measured. */
+/** Costs the estimate assumes when no earlier run on the project measured them. */
 export const ASSUMED_STRYKER_START_MS = 10_000;
 export const ASSUMED_MS_PER_MUTANT = 500;
 export const ASSUMED_DISCOVERY_MS = 10_000;
@@ -51,9 +52,10 @@ export interface PlanDeps {
   readonly computeBoundary: (options: BoundaryOptions) => Boundary;
   readonly countMutants: (request: MutantCountRequest) => Promise<MutantCount[]>;
   readonly loadBaseline: (targetRoot: string) => Promise<Baseline>;
+  readonly readTimings: (targetRoot: string) => RunTimings[];
 }
 
-const DEFAULT_DEPS: PlanDeps = { scopeDiff, computeBoundary, countMutants, loadBaseline };
+const DEFAULT_DEPS: PlanDeps = { scopeDiff, computeBoundary, countMutants, loadBaseline, readTimings };
 
 export interface PlanOptions {
   readonly cwd: string;
@@ -102,6 +104,8 @@ export interface PlanEstimate {
   readonly totalMs: number;
   readonly mutationMs: number;
   readonly faultMs: number;
+  /** Whether every cost the estimate used was measured on an earlier run of this project. */
+  readonly calibrated: boolean;
   /** How each part was derived, assumptions included. */
   readonly derivation: readonly string[];
 }
@@ -156,8 +160,25 @@ async function mutantCounts(request: MutantCountRequest, deps: PlanDeps): Promis
   }
 }
 
-function estimateMutation(mutation: PlanMutation, ranges: readonly ScopeRange[], preset: Preset, budgetMs: number): { ms: number; lines: string[] } {
-  if (mutation.notRun !== null) return { ms: 0, lines: [`mutation: 0 s, the phase would not run`] };
+interface PartEstimate {
+  readonly ms: number;
+  readonly lines: string[];
+  /** Whether every cost this part used was measured. */
+  readonly measured: boolean;
+}
+
+function cost(measured: number | null, assumed: number): { ms: number; word: string } {
+  return measured === null ? { ms: assumed, word: 'assumed' } : { ms: measured, word: 'measured' };
+}
+
+function estimateMutation(
+  mutation: PlanMutation,
+  ranges: readonly ScopeRange[],
+  preset: Preset,
+  budgetMs: number,
+  calibration: Calibration,
+): PartEstimate {
+  if (mutation.notRun !== null) return { ms: 0, lines: [`mutation: 0 s, the phase would not run`], measured: true };
   const lines = linesByFile(ranges);
   let counted = 0;
   let guessed = 0;
@@ -171,7 +192,9 @@ function estimateMutation(mutation: PlanMutation, ranges: readonly ScopeRange[],
     }
   }
   const batches = mutation.batches.length;
-  const rawMs = batches * ASSUMED_STRYKER_START_MS + (counted + guessed) * ASSUMED_MS_PER_MUTANT;
+  const start = cost(calibration.strykerStartMs, ASSUMED_STRYKER_START_MS);
+  const perMutant = cost(calibration.msPerMutant, ASSUMED_MS_PER_MUTANT);
+  const rawMs = batches * start.ms + (counted + guessed) * perMutant.ms;
   const ms = Math.min(rawMs, budgetMs);
   const mutants = guessedFiles === 0
     ? plural(counted, 'mutant')
@@ -179,29 +202,40 @@ function estimateMutation(mutation: PlanMutation, ranges: readonly ScopeRange[],
   const capped = rawMs > budgetMs ? `, capped at the mutation budget of ${seconds(budgetMs)}` : '';
   return {
     ms,
+    // A cost the estimate multiplies by zero does not need to be measured.
+    measured: calibration.strykerStartMs !== null && (counted + guessed === 0 || calibration.msPerMutant !== null),
     lines: [
-      `mutation: ${batches} ${batches === 1 ? 'batch' : 'batches'} x ${seconds(ASSUMED_STRYKER_START_MS)} assumed Stryker start and dry run + ${mutants} x ${seconds(ASSUMED_MS_PER_MUTANT)} assumed each = ${seconds(rawMs)}${capped}`,
+      `mutation: ${batches} ${batches === 1 ? 'batch' : 'batches'} x ${seconds(start.ms)} ${start.word} Stryker start and dry run + ${mutants} x ${seconds(perMutant.ms)} ${perMutant.word} each = ${seconds(rawMs)}${capped}`,
     ],
   };
 }
 
-function estimateFaults(faults: PlanFaults, budgetMs: number): { ms: number; lines: string[] } {
-  if (faults.notRun !== null) return { ms: 0, lines: ['faults: 0 s, the phase would not run'] };
+function estimateFaults(faults: PlanFaults, budgetMs: number, calibration: Calibration): PartEstimate {
+  if (faults.notRun !== null) return { ms: 0, lines: ['faults: 0 s, the phase would not run'], measured: true };
   const sites = Math.min(faults.calls.length, faults.maxCallSites);
-  const testsMs = faults.testsPerCallSite * ASSUMED_TEST_MS;
-  const others = faults.kinds.filter((kind) => kind !== 'blackhole').length;
-  const perSiteMs = DEFAULT_TEST_DEADLINE_MS + testsMs + others * testsMs;
-  const rawMs = ASSUMED_DISCOVERY_MS + sites * perSiteMs;
+  const discovery = cost(calibration.discoveryMs, ASSUMED_DISCOVERY_MS);
+  let rawMs: number;
+  let perSite: string;
+  if (calibration.msPerFaultRun === null) {
+    const testsMs = faults.testsPerCallSite * ASSUMED_TEST_MS;
+    const others = faults.kinds.filter((kind) => kind !== 'blackhole').length;
+    rawMs = discovery.ms + sites * (DEFAULT_TEST_DEADLINE_MS + testsMs + others * testsMs);
+    const tests = `${plural(faults.testsPerCallSite, 'test')} x ${seconds(ASSUMED_TEST_MS)} assumed`;
+    const more = others === 0 ? '' : `, then ${tests} for each of ${others} more fault ${others === 1 ? 'kind' : 'kinds'}`;
+    perSite = `(${seconds(DEFAULT_TEST_DEADLINE_MS)} fault deadline + ${tests}${more})`;
+  } else {
+    rawMs = discovery.ms + sites * faults.kinds.length * calibration.msPerFaultRun;
+    perSite = `${plural(faults.kinds.length, 'fault kind')} x ${seconds(calibration.msPerFaultRun)} measured per faulted run`;
+  }
   const ms = Math.max(0, Math.min(rawMs, budgetMs));
   const capped = rawMs > budgetMs ? `, capped at the ${seconds(budgetMs)} left` : '';
-  const tests = `${plural(faults.testsPerCallSite, 'test')} x ${seconds(ASSUMED_TEST_MS)} assumed`;
-  const more = others === 0 ? '' : `, then ${tests} for each of ${others} more fault ${others === 1 ? 'kind' : 'kinds'}`;
   return {
     ms,
+    measured: calibration.discoveryMs !== null && (sites === 0 || calibration.msPerFaultRun !== null),
     lines: [
-      `faults: ${seconds(ASSUMED_DISCOVERY_MS)} assumed discovery run + ${plural(sites, 'call site')} found in the source x (${seconds(DEFAULT_TEST_DEADLINE_MS)} fault deadline + ${tests}${more}) = ${seconds(rawMs)}${capped}`,
+      `faults: ${seconds(discovery.ms)} ${discovery.word} discovery run + ${plural(sites, 'call site')} found in the source x ${perSite} = ${seconds(rawMs)}${capped}`,
       `faults: ${plural(faults.kinds.length, 'fault kind')}, run kind by kind: ${faults.kinds.join(', ')}`,
-      'faults: calls through client libraries are only found when a test makes them, so the real count can be higher',
+      'faults: calls made through a wrapper or a client library, in the changed file or another, are found only at run time, when a test makes them, so the real count can be higher',
     ],
   };
 }
@@ -298,8 +332,9 @@ export async function planRun(options: PlanOptions): Promise<RunPlan> {
     notRun: faultsInScope ? null : planned.scope.mode === 'test-only' ? TEST_ONLY_NO_FAULTS : 'no TypeScript source in scope to fault',
   };
 
-  const mutationEstimate = estimateMutation(mutation, planned.mutationRanges, preset, budget.mutationMs);
-  const faultEstimate = estimateFaults(faults, preset.budgetMs - mutationEstimate.ms);
+  const calibration = calibrate(deps.readTimings(targetRoot));
+  const mutationEstimate = estimateMutation(mutation, planned.mutationRanges, preset, budget.mutationMs, calibration);
+  const faultEstimate = estimateFaults(faults, preset.budgetMs - mutationEstimate.ms, calibration);
   return {
     ...found,
     status: 'planned',
@@ -311,6 +346,7 @@ export async function planRun(options: PlanOptions): Promise<RunPlan> {
       mutationMs: mutationEstimate.ms,
       faultMs: faultEstimate.ms,
       totalMs: mutationEstimate.ms + faultEstimate.ms,
+      calibrated: mutationEstimate.measured && faultEstimate.measured,
       derivation: [...mutationEstimate.lines, ...faultEstimate.lines],
     },
   };

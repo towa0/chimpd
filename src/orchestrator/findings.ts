@@ -1,8 +1,8 @@
 import { firstErrorLine, type FaultKind, type MutantRecord, type Preset } from '../core/index.js';
-import type { CallSite, FaultRunResult, SkipReason } from '../fault-run/index.js';
+import type { CallSite, CallSiteResult, FaultRunResult, SkipReason } from '../fault-run/index.js';
 import { mutationFindingKind, priorOf, severityOf } from '../severity/index.js';
 import type { MutationResult } from '../stryker-adapter/index.js';
-import type { Checked, Finding, Item } from './types.js';
+import type { Checked, Finding, Item, NotTestedFile } from './types.js';
 
 export const NOTHING_CHECKED: Checked = { mutants: 0, invalidMutants: 0, callSites: 0 };
 
@@ -67,8 +67,10 @@ function unplannedReason(result: MutationResult, file: string): string {
   const batch = result.batches.find((entry) => entry.files.includes(file));
   if (batch?.outcome === 'dry-run-failed') return `not mutated: ${SUITE_FAILS}`;
   if (batch?.outcome === 'failed') return `mutants never planned: batch failed: ${firstErrorLine(batch.error) ?? 'no error reported'}`;
-  return 'mutants never planned: the budget ran out first';
+  return UNPLANNED_BUDGET;
 }
+
+const UNPLANNED_BUDGET = 'mutants never planned: the budget ran out first';
 
 /**
  * Findings and gaps from a mutation run. In test-only mode `findingMutants` is the set the changed
@@ -100,6 +102,20 @@ export function mutationItems(
   return { checked, findings, invalid, skipped, inconclusive: [] };
 }
 
+/** The considered mutants left untested, counted per file, with the files whose mutants were never planned. */
+export function notTestedFiles(result: MutationResult, considered: readonly MutantRecord[]): NotTestedFile[] {
+  const counts = new Map<string, number>();
+  for (const mutant of considered) {
+    if (mutant.status === 'NotTested') counts.set(mutant.file, (counts.get(mutant.file) ?? 0) + 1);
+  }
+  const unplanned = result.notTested.unplannedFiles
+    .filter((file) => unplannedReason(result, file) === UNPLANNED_BUDGET)
+    .map((file) => ({ file, mutants: null }));
+  return [...[...counts].map(([file, mutants]) => ({ file, mutants })), ...unplanned].sort((a, b) =>
+    a.file < b.file ? -1 : a.file > b.file ? 1 : 0,
+  );
+}
+
 function skipReason(reason: SkipReason, preset: Preset): string {
   if (reason === 'budget') return 'not faulted: the budget ran out first';
   if (reason === 'over-cap') return `not faulted: over the preset cap of ${preset.maxFaultedCallSites} call sites`;
@@ -107,8 +123,18 @@ function skipReason(reason: SkipReason, preset: Preset): string {
 }
 
 function siteItem(site: CallSite, reason: string, kind: FaultKind | null): Item {
-  const item: Item = { source: 'fault', file: site.file, line: site.line, reason };
+  const via = site.reachedFrom.length === 0 ? '' : `; reached from changed code: ${site.reachedFrom.join(', ')}`;
+  const item: Item = { source: 'fault', file: site.file, line: site.line, reason: `${reason}${via}` };
   return kind === null ? item : { ...item, faultKind: kind };
+}
+
+function callersOf(entry: CallSiteResult): { reachedFrom: string[]; notFaultedFrom: string[] } {
+  const faulted = new Set(entry.tests.map(({ test }) => test.id));
+  const reachedFrom = new Set(entry.site.reachedBy.filter(({ test }) => faulted.has(test.id)).flatMap((test) => test.reachedFrom));
+  return {
+    reachedFrom: [...reachedFrom].sort(),
+    notFaultedFrom: entry.site.reachedFrom.filter((caller) => !reachedFrom.has(caller)),
+  };
 }
 
 export function faultItems(result: FaultRunResult, preset: Preset): PhaseItems {
@@ -134,6 +160,7 @@ export function faultItems(result: FaultRunResult, preset: Preset): PhaseItems {
           verdict: entry.verdict,
           path: site.path,
           tests: entry.tests.map(({ test }) => `${test.file} > ${test.name}`),
+          ...callersOf(entry),
         },
       });
     } else if (entry.verdict === 'inconclusive') {

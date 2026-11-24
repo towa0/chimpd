@@ -1,6 +1,13 @@
 import path from 'node:path';
 import type { Vite } from 'vitest/node';
-import { firstErrorLine, type BlackHoleObservation, type FaultKind, type InjectedObservation, type ResponseUse } from '../core/index.js';
+import {
+  firstErrorLine,
+  type BlackHoleObservation,
+  type FaultKind,
+  type InjectedObservation,
+  type ResponseUse,
+  type ScopeRange,
+} from '../core/index.js';
 import { patchedBeforeTestsReason, type Fingerprints } from '../fault-recon/conflicts.js';
 import type { VitestNodeModule } from '../fault-recon/index.js';
 import type { HeldObservation, RuntimeEvent } from '../fault-recon/protocol.js';
@@ -15,6 +22,8 @@ export interface SiteRunRequest {
   readonly pristine: Fingerprints;
   readonly site: CallSite;
   readonly tests: readonly ReachingTest[];
+  /** The diff scope; only calls to the site that pass through it are faulted. */
+  readonly ranges: readonly ScopeRange[];
   readonly deadlineMs: number;
   /** The fault the site gets; the black hole when omitted. */
   readonly kind?: FaultKind;
@@ -130,6 +139,7 @@ export async function runFaultedSite(request: SiteRunRequest): Promise<SiteRun> 
       kind: 'fault',
       targetRoot,
       siteKey: site.key,
+      ranges: request.ranges,
       testIds: tests.map(({ test }) => test.id),
       deadlineMs: request.deadlineMs,
       faultKind: kind,

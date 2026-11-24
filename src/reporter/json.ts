@@ -1,5 +1,6 @@
 import type { BaselineEntry } from '../baseline/index.js';
 import { PRESETS, type FaultKind } from '../core/index.js';
+import { perFaultRunMs, perMutantMs } from '../timings/index.js';
 import {
   exitCodeOf,
   LEVELS,
@@ -37,6 +38,10 @@ export interface JsonFinding {
     readonly verdict: string;
     readonly path: 'fetch' | 'http';
     readonly tests: readonly string[];
+    /** For a site outside the diff, the changed functions the faulted tests reached it through, as "file function". */
+    readonly reachedFrom: readonly string[];
+    /** Changed functions that also reach the site, but through none of the faulted tests. */
+    readonly notFaultedFrom: readonly string[];
   } | null;
 }
 
@@ -81,12 +86,47 @@ export interface JsonPhase {
   readonly detail: string | null;
   readonly budgetMs: number;
   readonly spentMs: number;
+  /** Where the phase's time went; null when the phase did not run or failed before reporting it. */
+  readonly timings: JsonMutationTimings | JsonFaultTimings | null;
+}
+
+export interface JsonMutationTimings {
+  readonly batchesStarted: number;
+  /** From launching Stryker to the end of its dry run, over the batches that got that far. */
+  readonly strykerStartMs: number;
+  readonly dryRunNetMs: number;
+  readonly mutantsMs: number;
+  readonly mutantsRun: number;
+  readonly msPerMutant: number | null;
+}
+
+export interface JsonFaultTimings {
+  readonly discoveryMs: number | null;
+  readonly faultRuns: number;
+  readonly faultRunsMs: number;
+  readonly msPerFaultRun: number | null;
+}
+
+function roundOrNull(value: number | null): number | null {
+  return value === null ? null : Math.round(value);
+}
+
+function phaseTimings(timings: PhaseReport['timings']): JsonPhase['timings'] {
+  if (timings === undefined) return null;
+  if ('mutantsRun' in timings) {
+    const { batchesStarted, strykerStartMs, dryRunNetMs, mutantsMs, mutantsRun } = timings;
+    return { batchesStarted, strykerStartMs, dryRunNetMs, mutantsMs, mutantsRun, msPerMutant: roundOrNull(perMutantMs(timings)) };
+  }
+  const { discoveryMs, faultRuns, faultRunsMs } = timings;
+  return { discoveryMs, faultRuns, faultRunsMs, msPerFaultRun: roundOrNull(perFaultRunMs(timings)) };
 }
 
 export interface JsonCoverage {
   readonly checked: { readonly mutants: number; readonly invalidMutants: number; readonly callSites: number };
   /** Mutants that could not run, each with "compile error: " or "runtime error: " and the first error line. */
   readonly invalid: readonly JsonItem[];
+  /** Per file, mutants generated but never tested before the budget ran out; mutants is null for a file never planned. */
+  readonly notTested: readonly { readonly file: string; readonly mutants: number | null }[];
   readonly skipped: readonly JsonItem[];
   readonly inconclusive: readonly JsonItem[];
   readonly conflicts: readonly { readonly testFile: string; readonly patched: readonly string[] }[];
@@ -147,7 +187,17 @@ function finding(entry: Finding): JsonFinding {
             coveredBy: [...mutation.coveredBy],
             statement: mutation.statement,
           },
-    fault: fault === null ? null : { kind: fault.kind, verdict: fault.verdict, path: fault.path, tests: [...fault.tests] },
+    fault:
+      fault === null
+        ? null
+        : {
+            kind: fault.kind,
+            verdict: fault.verdict,
+            path: fault.path,
+            tests: [...fault.tests],
+            reachedFrom: [...fault.reachedFrom],
+            notFaultedFrom: [...fault.notFaultedFrom],
+          },
   };
 }
 
@@ -196,13 +246,14 @@ export function toJsonReport(result: RunResult, options: ExitOptions = {}): Json
             ignoredFiles: scope.ignoredFiles.map(({ file, reason }) => ({ file, reason })),
             notes: scope.notes.map(({ file, line, message }) => ({ file, line, message })),
           },
-    phases: result.phases.map(({ name, status, statusReason, detail, budgetMs, spentMs }) => ({
+    phases: result.phases.map(({ name, status, statusReason, detail, budgetMs, spentMs, timings }) => ({
       name,
       status,
       statusReason,
       detail: detail ?? null,
       budgetMs: Math.round(budgetMs),
       spentMs: Math.round(spentMs),
+      timings: phaseTimings(timings),
     })),
     findings: result.findings.map(finding),
     ignored: result.ignored.map((entry) => ({ ...finding(entry.finding), ignoredBy: entry.by, ignoreReason: entry.reason })),
@@ -219,6 +270,7 @@ export function toJsonReport(result: RunResult, options: ExitOptions = {}): Json
     coverage: {
       checked: { mutants: checked.mutants, invalidMutants: checked.invalidMutants, callSites: checked.callSites },
       invalid: result.invalid.map(item),
+      notTested: result.notTested.map(({ file, mutants }) => ({ file, mutants })),
       skipped: result.skipped.map(item),
       inconclusive: result.inconclusive.map(item),
       conflicts: result.conflicts.map(({ testFile, patched }) => ({ testFile, patched: [...patched] })),

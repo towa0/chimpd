@@ -9,6 +9,7 @@ import type {
   ScopeKind,
 } from '../core/index.js';
 import type { ProjectFrame } from '../fault-recon/call-site.js';
+import type { FaultTimings } from '../timings/index.js';
 
 export interface FaultTestRef {
   readonly id: string;
@@ -22,6 +23,8 @@ export interface ReachingTest {
   /** Duration of the test body in the unfaulted run. */
   readonly durationMs: number;
   readonly calls: number;
+  /** The changed functions this test's calls went through, for a site outside the diff; empty for a call made in changed code. */
+  readonly reachedFrom: readonly string[];
 }
 
 export interface CallSite {
@@ -34,6 +37,11 @@ export interface CallSite {
   readonly path: 'fetch' | 'http';
   /** Every project frame seen under this site, innermost first. */
   readonly frames: readonly ProjectFrame[];
+  /**
+   * For a site outside the diff, such as a client wrapper, the changed functions its in-scope calls went
+   * through, as "file function"; empty when the call itself is in changed code.
+   */
+  readonly reachedFrom: readonly string[];
   readonly scopeKind: ScopeKind;
   readonly prior: number;
   /** Passing tests whose body made the call, cheapest first. */
@@ -99,4 +107,6 @@ export interface FaultRunResult {
   readonly conflicts: readonly FileConflict[];
   readonly outOfScopeSites: number;
   readonly spentMs: number;
+  /** Where the phase's time went: the discovery run, and the faulted runs that finished. */
+  readonly timings: FaultTimings;
 }

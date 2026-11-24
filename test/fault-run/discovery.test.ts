@@ -6,6 +6,7 @@ import * as vitestNode from 'vitest/node';
 import type { ScopeMode } from '../../src/core/index.js';
 import { scopeDiff, type DiffScope } from '../../src/diff-scoper/index.js';
 import { discoverCallSites, type CallSite, type Discovery } from '../../src/fault-run/index.js';
+import { addWrapperModule } from '../helpers/fault-fixtures.js';
 import { createSampleApp, history, type SampleApp } from '../helpers/sample-app.js';
 import type { TempRepo } from '../helpers/temp-repo.js';
 
@@ -222,6 +223,39 @@ describe('call-site attribution', () => {
     const site = siteAt(discovery, app, 'src/ping.ts', '/warm');
     expect(site?.reachedBy).toEqual([]);
     expect(site?.unattributedCalls).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('call-site discovery through a wrapper', () => {
+  let app: SampleApp;
+  let discovery: Discovery;
+
+  beforeAll(async () => {
+    app = createSampleApp();
+    addWrapperModule(app);
+    ({ discovery } = await discover(app, 'changed-lines'));
+  }, TIMEOUT_MS);
+
+  afterAll(() => app.cleanup());
+
+  it('finds the unchanged wrapper a changed function calls, keyed by its own fetch, with the changed caller', () => {
+    expect(discovery.status).toBe('completed');
+    const site = siteAt(discovery, app, 'src/http-client.ts', 'await fetch(');
+    expect(site).toMatchObject({
+      file: 'src/http-client.ts',
+      functionName: 'getJson',
+      scopeKind: 'changed',
+      reachedFrom: ['src/statuses.ts getStatuses'],
+    });
+    expect(discovery.sites).toHaveLength(1);
+  });
+
+  it('counts only the tests that reach the wrapper through the changed function', () => {
+    const site = siteAt(discovery, app, 'src/http-client.ts', 'await fetch(');
+    expect(site?.reachedBy.map(({ test, calls, reachedFrom }) => [test.name, calls, reachedFrom])).toEqual([
+      ['loads statuses and places', 1, ['src/statuses.ts getStatuses']],
+    ]);
+    expect(discovery.outOfScopeSites).toBe(0);
   });
 });
 

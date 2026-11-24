@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { beforeAll, expect, it } from 'vitest';
+import type { ScopeRange } from '../../src/core/index.js';
 import { pristineFingerprints } from '../../src/fault-recon/conflicts.js';
 import type { VitestNodeModule } from '../../src/fault-recon/index.js';
 import { runFaultedSite } from '../../src/fault-run/faulted.js';
@@ -14,6 +15,7 @@ const configFile = join(targetRoot, 'vitest.config.ts');
 
 let vitestNode: VitestNodeModule;
 let discovery: Discovery;
+const ranges: readonly ScopeRange[] = [{ file: 'src/ping.ts', startLine: 1, endLine: 4, kind: 'changed', staticRegion: false }];
 
 beforeAll(async () => {
   const manifest = JSON.parse(readFileSync(join(packageDir, 'package.json'), 'utf8')) as { version: string };
@@ -22,7 +24,7 @@ beforeAll(async () => {
   discovery = await discoverCallSites({
     targetRoot,
     configFile,
-    ranges: [{ file: 'src/ping.ts', startLine: 1, endLine: 4, kind: 'changed', staticRegion: false }],
+    ranges,
     vitestNode,
   });
 });
@@ -52,6 +54,7 @@ it('holds the site in the test body only and reports the pending request on vite
     pristine: await pristineFingerprints(),
     site,
     tests: site.reachedBy,
+    ranges,
     deadlineMs: 300,
   });
   expect(run.tests).toHaveLength(1);

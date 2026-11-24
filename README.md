@@ -58,13 +58,13 @@ npx chimpd run --plan --level shake --seed 7 --json > plan.json
 - the files in scope, and every ignored file with its reason;
 - the number of mutants each file would get. Stryker's own instrumenter generates them in memory, with the preset's mutators, and counts the ones that start on a scoped line. When a file cannot be instrumented, its count is shown as unavailable with the reason. Mutants in module-level code are counted apart, because Stryker decides which mutants are static only after a test run;
 - the mutation batches in the order a run with the same seed would run them;
-- the changed outgoing calls found in the source. A run finds call sites by running the tests, so calls through client libraries are missing here;
+- the changed outgoing calls found in the source. A run finds call sites by running the tests, so calls made through a wrapper or a client library, in the changed file or another, are found only at run time and are missing here;
 - the preset, its caps and the budget split;
-- a time estimate, labelled as an estimate, with how it was derived. It assumes 10 s of Stryker start and dry run per batch, 0.5 s per mutant, a 10 s call-site discovery run, and, per call site up to the cap, the 2 s fault deadline plus 1 s per test. When a file's mutant count is unavailable, it uses the preset's guess of mutants per scoped line for that file instead. Each part is capped at its share of the budget. None of these costs is measured.
+- a time estimate, labelled as an estimate, with how it was derived. Every run records where its time went in `.chimpd/timings.json`, inside chimpd's git-ignored work directory, keeping the last 10 runs: Stryker's start and dry run per batch, the time per mutant, the call-site discovery run and the time per faulted run. The plan uses the most recent measurement of each and says which costs were measured. Without one, it assumes 10 s of Stryker start and dry run per batch, 0.5 s per mutant, a 10 s call-site discovery run, and, per call site up to the cap, the 2 s fault deadline plus 1 s per test, and labels the estimate "uncalibrated: first runs on a project often take several times longer". When a file's mutant count is unavailable, the plan uses the preset's guess of mutants per scoped line for that file instead. Each part is capped at its share of the budget.
 
 The plan also says when a run would stop with a tool error, for example when no Vitest config is found or `chimpd-baseline.json` cannot be read. The installed Vitest version is not checked, because that means loading it.
 
-The exit code is 0 whenever the plan could be computed, and 2 when it could not: outside a git repository, a base ref that does not resolve, bad arguments. `--json` prints `"report": "plan"` with its own `"schemaVersion": 1`, versioned apart from the run report under the same rules: `status`, `exitCode`, `error`, `level`, `preset`, `seed`, `git`, `scope`, `vitestConfig`, `runWouldFail`, `mutation`, `faults`, `budget` and `estimate`, which carries `"isEstimate": true` and its `derivation`.
+The exit code is 0 whenever the plan could be computed, and 2 when it could not: outside a git repository, a base ref that does not resolve, bad arguments. `--json` prints `"report": "plan"` with its own `"schemaVersion": 1`, versioned apart from the run report under the same rules: `status`, `exitCode`, `error`, `level`, `preset`, `seed`, `git`, `scope`, `vitestConfig`, `runWouldFail`, `mutation`, `faults`, `budget` and `estimate`, which carries `"isEstimate": true`, `calibrated` (whether every cost it used was measured on an earlier run) and its `derivation`.
 
 ## Presets
 
@@ -201,7 +201,13 @@ A test that never reaches the site, a call that escapes the scoped fault, a test
 
 Fault phase budget: the black hole waits up to the fault deadline (2 s) per site; the other kinds answer at once, so a run costs the test itself plus Vitest's start. Before each run the remaining budget must cover the tests' unfaulted durations plus the deadline, for every kind, because a call that retries forever runs until it.
 
-Call sites are found by running the tests, so a call no test makes would leave no trace. To close that gap, chimpd also reads the changed code for direct calls to `fetch` (also as `globalThis.fetch`), `http.request`, `http.get`, `https.request` and `https.get`, under any import style. Each one the tests never reached is listed as not checked: "changed call to fetch at src/a.ts:12 is not reached by any test". Calls through a client library such as axios are not read from the source; they are faulted when a test makes them.
+A call is in scope when any frame of its stack in the project's own source lies in the diff scope, not only the innermost one. A changed function that calls `fetch` through an unchanged client wrapper in another file therefore has the wrapper's call faulted. The site is still the innermost frame, the wrapper's own `fetch`, and the report names the changed functions that reach it: "reached from changed code: src/live/statuses.ts getStatuses". Only calls that pass through changed code count: a test that reaches the wrapper only from unchanged code is not picked for it, and in a faulted run the same wrapper called from unchanged code in the same test gets the real answer.
+
+Several changed functions that share one wrapper share one site. It counts once against the call-site cap, is ordered by the seed like any other site, gets one run per fault kind from the budget, and a baseline entry or inline comment for it names the wrapper's file and function, where the finding is reported. Its tests are the cheapest ones, except that a test through a changed caller no picked test goes through comes before a cheaper test through a caller already covered. A changed caller that none of the picked tests goes through is listed on the finding as not faulted at this level.
+
+When the changed code reaches no outgoing call at all in the tests related to it, the fault phase says so, under Coverage and as its reason, rather than reporting 0 call sites silently.
+
+Call sites are found by running the tests, so a call no test makes would leave no trace. To close that gap, chimpd also reads the changed code for direct calls to `fetch` (also as `globalThis.fetch`), `http.request`, `http.get`, `https.request` and `https.get`, under any import style. Each one the tests never reached is listed as not checked: "changed call to fetch at src/a.ts:12 is not reached by any test". Calls through a wrapper or a client library such as axios are not read from the source, whether the wrapper is in the changed file or another; they are found only at run time, and faulted when a test makes them through changed code.
 
 ## Output
 
@@ -214,11 +220,11 @@ The text report shows the diff scope, a coverage summary, the findings most seve
 - `level`, `preset`, `budgetMs`, `spentMs`, `seed`
 - `git`: base, merge base, head, and whether the tree had uncommitted changes
 - `scope`: changed source and test files, ignored files with their reason, notes
-- `phases`: one entry per phase, with its status, reason, the full error as `detail` when it failed, budget and time spent
+- `phases`: one entry per phase, with its status, reason, the full error as `detail` when it failed, budget and time spent, and `timings`, where that time went: for mutation, Stryker's start and dry run (`strykerStartMs`, with the dry run's own test time as `dryRunNetMs`), and the time after it over the mutants run (`mutantsMs`, `mutantsRun`, `msPerMutant`); for faults, the discovery run (`discoveryMs`) and the faulted runs that finished (`faultRuns`, `faultRunsMs`, `msPerFaultRun`). The text report shows the same breakdown under Phases.
 - `findings`: every finding that counts, with its severity and its mutation or fault detail; a mutation finding carries the `statement` hash a baseline entry would use
 - `ignored`: every finding the baseline or an inline comment set aside, with `ignoredBy` (`baseline` or `inline`) and `ignoreReason`
 - `baseline`: whether `chimpd-baseline.json` exists, its number of entries, and its `stale` and `notEvaluated` entries; `null` when the run stopped before reading it
-- `coverage`: `checked` counts, plus `invalid`, `skipped`, `inconclusive` and `conflicts`, each item with its reason
+- `coverage`: `checked` counts, plus `invalid`, `skipped`, `inconclusive` and `conflicts`, each item with its reason, and `notTested`: per file, the mutants that were generated but not tested before the budget ran out (`mutants` is `null` for a file whose mutants were never planned); each of those mutants is also in `skipped`
 
 Every duration is in whole milliseconds. Nothing in scope is dropped silently: whatever was not checked appears under `coverage` and in the text report.
 
@@ -253,6 +259,8 @@ Gaps that make a run partial include call sites over the preset cap, a budget th
 - Concurrent tests that reach the same call site are inconclusive, because a held request cannot be attributed to one of them.
 - The first call made after the fault deadline has released a test is inconclusive.
 - Calls made at import time or from hooks are never faulted. Their sites are reported as inconclusive.
+- A call reached through a wrapper is in scope only when a frame of changed code is on its stack trace, awaiting callers included. A changed function that only schedules the call, for example from a timer or an event handler that runs later, leaves no frame there, so the call is not faulted.
+- The plan's static scan finds direct calls only. A changed call to a wrapper does not show up in the plan, and a changed call to a wrapper that no test reaches is not listed as not checked.
 - The seed orders mutation batches but not the mutants inside a batch, whose order is Stryker's.
 - The Stryker type checker uses chimpd's own TypeScript 6, also for projects on TypeScript 7. The checker's version check tests that copy, not the project's. A project that does not type-check under it is mutated without the checker.
 - A mutant on a type guard, such as `typeof value !== 'string'`, usually fails to compile once mutated, so a change made only of such lines can end with no mutant checked. Those mutants are listed as invalid with the compiler's first error, and such a run is `inconclusive`.

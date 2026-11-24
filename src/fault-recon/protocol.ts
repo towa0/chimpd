@@ -1,4 +1,4 @@
-import type { AbortKind, DeadlineMechanism, FaultKind, ResponseUse, TestOutcome } from '../core/index.js';
+import type { AbortKind, DeadlineMechanism, FaultKind, ResponseUse, ScopeRange, TestOutcome } from '../core/index.js';
 import type { StackFrame } from './call-site.js';
 import type { Fingerprints } from './conflicts.js';
 
@@ -10,6 +10,8 @@ export interface FaultMode {
   readonly kind: 'fault';
   readonly targetRoot: string;
   readonly siteKey: string;
+  /** Only calls with a frame in one of these ranges are faulted, so the site's callers outside the diff keep the real answer. */
+  readonly ranges: readonly ScopeRange[];
   /** Tests whose body runs with the site held; every other test is skipped. */
   readonly testIds: readonly string[];
   readonly deadlineMs: number;

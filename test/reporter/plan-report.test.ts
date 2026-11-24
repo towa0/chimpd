@@ -27,11 +27,14 @@ describe('plan text report', () => {
     expect(text).toContain('  batch 1: src/a.ts, src/b.ts');
     expect(text).toContain('  src/a.ts:12 fetch (changed line)');
     expect(text).toContain('at most 3 call sites, 1 test each');
+    expect(text).toContain(
+      '  calls made through a wrapper or a client library, in the changed file or another, are found only at run time, when a test makes them',
+    );
     expect(text).toContain('Budget: 120.0 s; mutation 84.0 s, faults 36.0 s plus what the mutation phase leaves unused');
   });
 
-  it('labels the estimate as one and shows its derivation', () => {
-    expect(text).toContain('Estimate (rough, not measured): about 30.0 s');
+  it('labels an estimate without measured timings as uncalibrated and shows its derivation', () => {
+    expect(text).toContain('Estimate (uncalibrated: first runs on a project often take several times longer): about 30.0 s, derived from:');
     expect(text).toContain('  mutation: 1 batch x 10 s assumed Stryker start');
   });
 

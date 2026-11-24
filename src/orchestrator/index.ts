@@ -22,6 +22,7 @@ import { applyIgnores, BASELINE_FILE, loadBaseline, type Baseline } from '../bas
 import { DEFAULT_BASE, findOutgoingCalls, scopeDiff, type DiffScope, type DiffScopeOptions } from '../diff-scoper/index.js';
 import { runFaults, type CallSiteResult, type FaultRunRequest, type FaultRunResult } from '../fault-run/index.js';
 import { runMutation, type MutationRequest, type MutationResult } from '../stryker-adapter/index.js';
+import { recordTimings, type FaultTimings, type MutationTimings, type RunTimings } from '../timings/index.js';
 import {
   boundaryRanges,
   computeBoundary,
@@ -30,7 +31,7 @@ import {
   type BoundaryOptions,
 } from '../test-only-scoper/index.js';
 import { mutationBudgetMs } from './budget.js';
-import { faultItems, mutationItems, NOTHING_CHECKED, SUITE_FAILS, type PhaseItems } from './findings.js';
+import { faultItems, mutationItems, notTestedFiles, NOTHING_CHECKED, SUITE_FAILS, type PhaseItems } from './findings.js';
 import {
   ChimpdError,
   findVitestConfig,
@@ -45,6 +46,7 @@ import {
   type GitInfo,
   type Item,
   type Level,
+  type NotTestedFile,
   type PhaseReport,
   type PhaseStatus,
   type RunResult,
@@ -66,9 +68,18 @@ export interface OrchestratorDeps {
   readonly runFaults: (request: FaultRunRequest) => Promise<FaultRunResult>;
   readonly loadVitest: (targetRoot: string) => Promise<TargetVitest>;
   readonly loadBaseline: (targetRoot: string) => Promise<Baseline>;
+  readonly recordTimings: (targetRoot: string, run: RunTimings) => void;
 }
 
-const DEFAULT_DEPS: OrchestratorDeps = { scopeDiff, computeBoundary, runMutation, runFaults, loadVitest: loadTargetVitest, loadBaseline };
+const DEFAULT_DEPS: OrchestratorDeps = {
+  scopeDiff,
+  computeBoundary,
+  runMutation,
+  runFaults,
+  loadVitest: loadTargetVitest,
+  loadBaseline,
+  recordTimings,
+};
 
 export interface RunOptions {
   readonly cwd: string;
@@ -106,6 +117,9 @@ export async function checkTarget(cwd: string, base: string): Promise<void> {
     throw new ChimpdError(`base ref '${base}' does not resolve to a commit in ${cwd}; fetch it or pass --base <ref>`);
   }
 }
+
+/** The reason a completed fault phase carries when the changed code made no outgoing call at all. */
+export const NO_OUTGOING_CALL = 'the changed code reached no outgoing call in the tests related to it, directly or through other code';
 
 export const TEST_ONLY_NO_FAULTS = 'only test files changed; the fault phase faults calls made from changed source code';
 
@@ -261,6 +275,7 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
     checked: NOTHING_CHECKED,
     findings: [],
     invalid: [],
+    notTested: [],
     skipped: [],
     inconclusive: [],
     conflicts: [],
@@ -320,6 +335,9 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
   const conflicts: FaultRunResult['conflicts'][number][] = [];
   const considered: MutantRecord[] = [];
   const faulted: CallSiteResult[] = [];
+  const notTested: NotTestedFile[] = [];
+  let mutationTimings: MutationTimings | null = null;
+  let faultTimings: FaultTimings | null = null;
 
   const mutationMs = Math.round(mutationBudgetMs({
     remainingMs: budget.remainingMs(),
@@ -359,13 +377,17 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
         ...(detail === undefined ? {} : { detail }),
         budgetMs: mutationMs,
         spentMs: Math.round(now() - startedAt),
+        timings: mutation.timings,
       });
+      mutationTimings = mutation.timings;
       if (plan.changedTestFiles === null) {
         considered.push(...mutation.mutants);
+        notTested.push(...notTestedFiles(mutation, mutation.mutants));
         collected.push(mutationItems(mutation, mutation.mutants, null));
       } else {
         const report = summarizeTestOnly(mutation.mutants, mutation.tests, plan.changedTestFiles);
         considered.push(...report.mutants);
+        notTested.push(...notTestedFiles(mutation, report.mutants));
         collected.push(mutationItems(mutation, report.mutants, report.coveredNotKilled));
       }
     } catch (error) {
@@ -409,20 +431,26 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
           seed,
           ...output,
         });
+        const spentMs = Math.round(now() - startedAt);
+        const unreached = discoveryFinished(faults)
+          ? unreachedCalls(findOutgoingCalls(targetRoot, plan.faultRanges), faults, plan.faultRanges)
+          : [];
+        const reachedNothing =
+          faults.status === 'completed' &&
+          faults.results.length + faults.skipped.length + faults.conflicts.length + unreached.length === 0;
         phases.push({
           name: 'faults',
           status: faults.status,
-          statusReason: faults.statusReason,
+          statusReason: reachedNothing ? NO_OUTGOING_CALL : faults.statusReason,
           budgetMs: faultMs,
-          spentMs: Math.round(now() - startedAt),
+          spentMs,
+          timings: faults.timings,
         });
+        faultTimings = faults.timings;
         conflicts.push(...faults.conflicts);
         faulted.push(...faults.results);
         collected.push(faultItems(faults, preset));
-        if (discoveryFinished(faults)) {
-          const calls = findOutgoingCalls(targetRoot, plan.faultRanges);
-          collected.push({ ...EMPTY_ITEMS, skipped: unreachedCalls(calls, faults, plan.faultRanges) });
-        }
+        collected.push({ ...EMPTY_ITEMS, skipped: unreached });
         if (faults.status !== 'completed' && faults.results.length === 0 && faults.skipped.length === 0) {
           collected.push(filesNotChecked('fault', plan.faultRanges, `not faulted: ${faults.statusReason ?? faults.status}`));
         }
@@ -438,6 +466,10 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
         collected.push(filesNotChecked('fault', plan.faultRanges, `not faulted: the fault phase failed: ${reasonOf(error)}`));
       }
     }
+  }
+
+  if (mutationTimings !== null || faultTimings !== null) {
+    deps.recordTimings(targetRoot, { at: new Date().toISOString(), level, mutation: mutationTimings, faults: faultTimings });
   }
 
   const ignores = applyIgnores({
@@ -470,6 +502,7 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
     checked,
     findings,
     invalid,
+    notTested,
     skipped,
     inconclusive,
     conflicts,

@@ -149,6 +149,58 @@ describe('planRun', () => {
     expect(result.estimate?.derivation.join('\n')).toContain('12 mutants');
   });
 
+  it('marks an estimate without measured timings as uncalibrated', async () => {
+    const deps: Partial<PlanDeps> = {
+      countMutants: () => Promise.resolve([{ file: 'src/a.ts', mutants: 12, moduleLevel: 0, reason: null }]),
+    };
+    const result = await plan(changedRepo(), { level: 'poke', deps });
+    expect(result.estimate?.calibrated).toBe(false);
+  });
+
+  it('estimates from the timings an earlier run measured, and says they were measured', async () => {
+    const deps: Partial<PlanDeps> = {
+      countMutants: () => Promise.resolve([{ file: 'src/a.ts', mutants: 12, moduleLevel: 0, reason: null }]),
+      readTimings: () => [
+        {
+          at: '2026-11-24T10:00:00.000Z',
+          level: 'poke',
+          mutation: { batchesStarted: 1, strykerStartMs: 50_000, dryRunNetMs: 8_000, mutantsMs: 30_000, mutantsRun: 10 },
+          faults: { discoveryMs: 11_000, faultRuns: 2, faultRunsMs: 8_000 },
+        },
+      ],
+    };
+    const result = await plan(changedRepo(), { level: 'poke', deps });
+    const mutationMs = 50_000 + 12 * 3_000;
+    const faultMs = 11_000 + 1 * 1 * 4_000;
+    expect(result.estimate).toMatchObject({ calibrated: true, mutationMs: Math.min(mutationMs, result.budget.mutationMs), faultMs });
+    const derivation = result.estimate?.derivation.join('\n') ?? '';
+    expect(derivation).toContain('1 batch x 50.0 s measured Stryker start and dry run + 12 mutants x 3.0 s measured each');
+    expect(derivation).toContain('faults: 11.0 s measured discovery run + 1 call site found in the source x 1 fault kind x 4.0 s measured per faulted run');
+    expect(derivation).not.toMatch(/assumed/);
+  });
+
+  it('counts an estimate as calibrated when the only unmeasured cost is one it multiplies by no call site', async () => {
+    const repo = changedRepo();
+    const deps: Partial<PlanDeps> = {
+      countMutants: () => Promise.resolve([{ file: 'src/a.ts', mutants: 12, moduleLevel: 0, reason: null }]),
+      readTimings: () => [
+        {
+          at: '2026-11-24T10:00:00.000Z',
+          level: 'poke',
+          mutation: { batchesStarted: 1, strykerStartMs: 50_000, dryRunNetMs: 8_000, mutantsMs: 30_000, mutantsRun: 10 },
+          faults: { discoveryMs: 11_000, faultRuns: 0, faultRunsMs: 0 },
+        },
+      ],
+    };
+    const withCall = await plan(repo, { level: 'poke', deps });
+    expect(withCall.faults?.calls).toHaveLength(1);
+    expect(withCall.estimate?.calibrated).toBe(false);
+    repo.write('src/a.ts', SOURCE.replace('fetch(', 'String('));
+    const withoutCall = await plan(repo, { level: 'poke', deps });
+    expect(withoutCall.faults?.calls).toEqual([]);
+    expect(withoutCall.estimate?.calibrated).toBe(true);
+  });
+
   it('lists the fault kinds a run would use and counts a run per site and kind in the estimate', async () => {
     const deps: Partial<PlanDeps> = {
       countMutants: () => Promise.resolve([{ file: 'src/a.ts', mutants: 12, moduleLevel: 0, reason: null }]),

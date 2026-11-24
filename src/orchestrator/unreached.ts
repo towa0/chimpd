@@ -13,7 +13,12 @@ export function unreachedCalls(calls: readonly OutgoingCall[], result: FaultRunR
   const seen = [...result.results.map(({ site }) => site), ...result.skipped.map(({ site }) => site)];
   const conflicting = result.conflicts.length > 0 ? ', or only from a test file that replaces it' : '';
   return calls
-    .filter((call) => !seen.some((site) => site.file === call.file && site.line >= call.line && site.line <= call.endLine))
+    .filter(
+      (call) =>
+        !seen.some((site) =>
+          [site, ...site.frames].some((frame) => frame.file === call.file && frame.line >= call.line && frame.line <= call.endLine),
+        ),
+    )
     .map((call) => {
       const changed = rangeForLine(ranges, call.file, call.line)?.kind === 'changed';
       const what = changed ? `changed call to ${call.callee}` : `call to ${call.callee} in a changed function`;

@@ -68,13 +68,20 @@ function send(message: WorkerMessage): void {
   process.send?.(message);
 }
 
-function toWire(mutant: PlanEvent['mutantPlans'][number]['mutant']): WireMutant {
+type PlanMutant = PlanEvent['mutantPlans'][number]['mutant'];
+
+interface Position {
+  readonly line: number;
+  readonly column: number;
+}
+
+function toWire(mutant: PlanMutant, convert: (position: Position) => Position): WireMutant {
   const zero = { line: 0, column: 0 };
   return {
     id: mutant.id,
     fileName: mutant.fileName,
-    start: mutant.location?.start ?? zero,
-    end: mutant.location?.end ?? zero,
+    start: mutant.location === undefined ? zero : convert(mutant.location.start),
+    end: mutant.location === undefined ? zero : convert(mutant.location.end),
     mutatorName: mutant.mutatorName ?? '',
     replacement: mutant.replacement ?? '',
     status: mutant.status ?? null,
@@ -84,6 +91,15 @@ function toWire(mutant: PlanEvent['mutantPlans'][number]['mutant']): WireMutant 
     static: mutant.static ?? false,
     testsCompleted: mutant.testsCompleted ?? null,
   };
+}
+
+/** A planned mutant carries Stryker's internal 0-based position; a tested one already carries the 1-based one. */
+export function plannedToWire(mutant: PlanMutant): WireMutant {
+  return toWire(mutant, (position) => ({ line: position.line + 1, column: position.column + 1 }));
+}
+
+export function testedToWire(mutant: StrykerMutant): WireMutant {
+  return toWire(mutant, (position) => position);
 }
 
 const streamReporter = {
@@ -101,10 +117,10 @@ const streamReporter = {
     });
   },
   onMutationTestingPlanReady(event: PlanEvent): void {
-    send({ type: 'plan', mutants: event.mutantPlans.map((plan) => toWire(plan.mutant)) });
+    send({ type: 'plan', mutants: event.mutantPlans.map((plan) => plannedToWire(plan.mutant)) });
   },
   onMutantTested(result: StrykerMutant): void {
-    send({ type: 'mutant', mutant: toWire(result) });
+    send({ type: 'mutant', mutant: testedToWire(result) });
   },
 };
 

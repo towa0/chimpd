@@ -16,6 +16,7 @@ import {
   type MutantStatus,
   type ScopeRange,
 } from '../core/index.js';
+import type { MutationTimings } from '../timings/index.js';
 import { planBatches, type Batch } from './batches.js';
 import { decideChecker, strykerVersion, type CheckerDecision } from './checker.js';
 import { buildStrykerOptions, STRYKER_TEMP_DIR } from './options.js';
@@ -61,6 +62,12 @@ export interface BatchReport {
   readonly planned: number | null;
   readonly tested: number;
   readonly error: string | null;
+  /** From launching Stryker to the end of its dry run; null when the dry run never finished. */
+  readonly strykerStartMs: number | null;
+  /** From the end of the dry run to the end of the batch; null when the dry run never finished. */
+  readonly mutantsMs: number | null;
+  /** Mutants Stryker ran or type-checked after the dry run; ignored ones are not counted. */
+  readonly mutantsRun: number;
 }
 
 export interface TestInfo {
@@ -89,6 +96,8 @@ export interface MutationResult {
   readonly targetConfigIgnored: string | null;
   readonly strykerVersion: string;
   readonly dryRunNetMs: number | null;
+  /** Where the phase's time went, summed over the batches. */
+  readonly timings: MutationTimings;
 }
 
 export const NOT_TESTED_REASON = 'not tested: budget';
@@ -212,6 +221,10 @@ async function runBatch(batch: Batch, context: BatchContext): Promise<BatchRun> 
   let dryRunNetMs: number | null = null;
   let coverageReported: boolean | null = null;
   let plannedCount: number | null = null;
+  const clock = request.clock ?? realClock;
+  const launchedAt = clock.now();
+  let dryRunAt: number | null = null;
+  let mutantsRun = 0;
 
   const entry = request.workerEntry ?? workerPath();
   const overShareMs = context.shareMs * OVER_SHARE_FACTOR;
@@ -219,7 +232,7 @@ async function runBatch(batch: Batch, context: BatchContext): Promise<BatchRun> 
     cwd: request.targetRoot,
     killAfterMs: Math.min(overShareMs, remainingMs),
     entry,
-    clock: request.clock ?? realClock,
+    clock,
     ...(request.onTargetOutput === undefined ? {} : { onOutput: request.onTargetOutput }),
     options: buildStrykerOptions({
       batch,
@@ -233,6 +246,7 @@ async function runBatch(batch: Batch, context: BatchContext): Promise<BatchRun> 
     }),
     onMessage(message) {
       if (message.type === 'dry-run') {
+        dryRunAt = clock.now();
         tests = message.tests;
         dryRunNetMs = message.netMs;
         coverageReported = message.coverageReported ?? null;
@@ -240,12 +254,14 @@ async function runBatch(batch: Batch, context: BatchContext): Promise<BatchRun> 
         plannedCount = message.mutants.length;
         for (const mutant of message.mutants) planned.set(mutant.id, mutant);
       } else if (message.type === 'mutant') {
+        if (message.mutant.status !== 'Ignored' && !tested.has(message.mutant.id)) mutantsRun += 1;
         tested.set(message.mutant.id, message.mutant);
       }
       request.onWorkerMessage?.(message);
     },
   });
 
+  const endedAt = clock.now();
   // A killed run never reaches Stryker's own cleanup of its sandbox.
   removeTree(path.join(request.targetRoot, STRYKER_TEMP_DIR));
 
@@ -272,7 +288,22 @@ async function runBatch(batch: Batch, context: BatchContext): Promise<BatchRun> 
       planned: plannedCount,
       tested: tested.size,
       error: run.error,
+      strykerStartMs: dryRunAt === null ? null : Math.round(dryRunAt - launchedAt),
+      mutantsMs: dryRunAt === null ? null : Math.round(endedAt - dryRunAt),
+      mutantsRun,
     },
+  };
+}
+
+function mutationTimings(reports: readonly BatchReport[], dryRunNetMs: number | null): MutationTimings {
+  const started = reports.filter((report) => report.strykerStartMs !== null);
+  const sum = (pick: (report: BatchReport) => number | null): number => started.reduce((total, report) => total + (pick(report) ?? 0), 0);
+  return {
+    batchesStarted: started.length,
+    strykerStartMs: sum((report) => report.strykerStartMs),
+    dryRunNetMs: Math.round(dryRunNetMs ?? 0),
+    mutantsMs: sum((report) => report.mutantsMs),
+    mutantsRun: sum((report) => report.mutantsRun),
   };
 }
 
@@ -320,6 +351,7 @@ export async function runMutation(request: MutationRequest): Promise<MutationRes
       outOfScope += 1;
       return;
     }
+    if (status === 'NotTested') notTested += 1;
     records.push({
       file,
       start: mutant.start,
@@ -362,7 +394,18 @@ export async function runMutation(request: MutationRequest): Promise<MutationRes
   for (const batch of batches) {
     const files = batch.files.map((entry) => entry.file);
     if (budget.exhausted()) {
-      reports.push({ index: batch.index, files, outcome: 'not-launched', elapsedMs: 0, planned: null, tested: 0, error: null });
+      reports.push({
+        index: batch.index,
+        files,
+        outcome: 'not-launched',
+        elapsedMs: 0,
+        planned: null,
+        tested: 0,
+        error: null,
+        strykerStartMs: null,
+        mutantsMs: null,
+        mutantsRun: 0,
+      });
       unplannedFiles.push(...files);
       continue;
     }
@@ -376,7 +419,6 @@ export async function runMutation(request: MutationRequest): Promise<MutationRes
     if (run.report.planned === null && run.report.outcome !== 'completed') unplannedFiles.push(...files);
 
     for (const outcome of reclassifyUncovered(resolveOutcomes(run.planned, run.tested), run.coverageReported)) {
-      if (outcome.status === 'NotTested') notTested += 1;
       record(outcome.mutant, outcome.status, outcome.statusReason);
     }
   }
@@ -395,5 +437,6 @@ export async function runMutation(request: MutationRequest): Promise<MutationRes
     targetConfigIgnored: findTargetConfig(request.targetRoot),
     strykerVersion: strykerVersion(),
     dryRunNetMs,
+    timings: mutationTimings(reports, dryRunNetMs),
   };
 }

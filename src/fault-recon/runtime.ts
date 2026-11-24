@@ -8,7 +8,7 @@ import type { TestOutcome } from '../core/types.js';
 import type { RequestObservation } from '../fault-injector/blackhole.js';
 import { installCallCapture, type CallMetadata } from '../fault-injector/call-capture.js';
 import { installBlackHole } from '../fault-injector/interception.js';
-import { callSiteKey, parseStack, projectFrames } from './call-site.js';
+import { parseStack, targetsSite } from './call-site.js';
 import { createPatchGuard, patchedSince, testEnvironmentName } from './conflicts.js';
 import { startInjection } from './inject-session.js';
 import type { FaultMode, HeldObservation, InjectedCall, RuntimeConfig, RuntimeEvent } from './protocol.js';
@@ -113,8 +113,7 @@ function startFault(mode: FaultMode): Session {
       const current = body.getStore();
       const active = current === undefined ? undefined : running.get(current);
       if (current === undefined || active === undefined) return;
-      const innermost = projectFrames(parseStack(metadata.stack), mode.targetRoot)[0];
-      if (innermost === undefined || callSiteKey(innermost) !== mode.siteKey) return;
+      if (!targetsSite(metadata.stack, mode)) return;
       active.targetedCalls += 1;
       active.calls.push(metadata);
       owners.set(metadata, current);

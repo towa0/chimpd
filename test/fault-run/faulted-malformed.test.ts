@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as vitestNode from 'vitest/node';
+import type { ScopeRange } from '../../src/core/index.js';
 import { scopeDiff } from '../../src/diff-scoper/index.js';
 import { pristineFingerprints, type Fingerprints } from '../../src/fault-recon/conflicts.js';
 import { discoverCallSites } from '../../src/fault-run/discover.js';
@@ -12,6 +13,7 @@ const TIMEOUT_MS = 60_000;
 const DEADLINE_MS = 400;
 
 let pristine: Fingerprints;
+let ranges: readonly ScopeRange[];
 let app: SampleApp;
 let discovery: Discovery;
 
@@ -21,6 +23,7 @@ beforeAll(async () => {
   history.clientChanges(app);
   history.faultKindChanges(app);
   const scope = await scopeDiff({ repoRoot: app.dir, mode: 'enclosing-functions' });
+  ranges = scope.ranges;
   discovery = await discoverCallSites({ targetRoot: app.dir, configFile: path.join(app.dir, 'vitest.config.ts'), ranges: scope.ranges, vitestNode, pristine });
 }, TIMEOUT_MS);
 
@@ -52,6 +55,7 @@ describe('malformed-json runs on the sample app', () => {
         pristine,
         site,
         tests: site.reachedBy,
+        ranges,
         deadlineMs: DEADLINE_MS,
         kind: 'malformed-json',
       });

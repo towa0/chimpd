@@ -5,7 +5,7 @@ import { installInjection, type InjectedEvent } from '../fault-injector/inject.j
 import type { ResponseWatch } from '../fault-injector/response-use.js';
 import { INJECTORS } from '../fault-injector/injectors.js';
 import { watchJsonParse } from '../fault-injector/malformed-json.js';
-import { callSiteKey, parseStack, projectFrames } from './call-site.js';
+import { targetsSite } from './call-site.js';
 import type { FaultMode, InjectedCall } from './protocol.js';
 import type { BodyReport, Session, TestBody } from './runtime.js';
 
@@ -49,8 +49,7 @@ export function startInjection(mode: FaultMode, current: () => TestBody | undefi
       const owner = current();
       const active = owner === undefined ? undefined : running.get(owner);
       if (owner === undefined || active === undefined) return;
-      const innermost = projectFrames(parseStack(metadata.stack), mode.targetRoot)[0];
-      if (innermost === undefined || callSiteKey(innermost) !== mode.siteKey) return;
+      if (!targetsSite(metadata.stack, mode)) return;
       active.targetedCalls += 1;
       active.calls.push(metadata);
       owners.set(metadata, owner);

@@ -48,10 +48,14 @@ export async function runFaults(request: FaultRunRequest): Promise<FaultRunResul
     ...(request.onTargetOutput === undefined ? {} : { onTargetOutput: request.onTargetOutput }),
   };
 
+  // Timings are wall time, so that measuring them leaves the budget clock's readings as they were.
+  const discoveryStartedAt = realNow();
   const discovery = await discoverCallSites({ ...shared, ranges: request.ranges, timeoutMs: budget.remainingMs() });
+  const discoveryMs = Math.round(realNow() - discoveryStartedAt);
   const { conflicts, outOfScopeSites } = discovery;
   if (discovery.status === 'inconclusive') {
     return {
+      timings: { discoveryMs: discovery.budgetExhausted ? null : discoveryMs, faultRuns: 0, faultRunsMs: 0 },
       status: discovery.budgetExhausted ? 'budget-exhausted' : 'inconclusive',
       statusReason: discovery.statusReason,
       results: [],
@@ -68,6 +72,8 @@ export async function runFaults(request: FaultRunRequest): Promise<FaultRunResul
   const results: CallSiteResult[] = [];
   const skipped: SkippedCallSite[] = [...selection.skipped];
   let outOfBudget = false;
+  let faultRuns = 0;
+  let faultRunsMs = 0;
 
   // Kind by kind, so a short budget drops the later kinds before it drops black hole coverage of any site.
   for (const kind of kinds) {
@@ -79,11 +85,14 @@ export async function runFaults(request: FaultRunRequest): Promise<FaultRunResul
         skipped.push({ site, kind, reason: 'budget' });
         continue;
       }
-      const run = await runFaultedSite({ ...shared, site, tests, deadlineMs, kind, timeoutMs: remainingMs });
+      const runStartedAt = realNow();
+      const run = await runFaultedSite({ ...shared, site, tests, ranges: request.ranges, deadlineMs, kind, timeoutMs: remainingMs });
       if (run.killed) {
         outOfBudget = true;
         skipped.push({ site, kind, reason: 'budget' });
       } else {
+        faultRuns += 1;
+        faultRunsMs += realNow() - runStartedAt;
         results.push(combineSite(site, run.tests, kind));
       }
     }
@@ -100,5 +109,6 @@ export async function runFaults(request: FaultRunRequest): Promise<FaultRunResul
     conflicts,
     outOfScopeSites,
     spentMs: budget.spentMs(),
+    timings: { discoveryMs, faultRuns, faultRunsMs: Math.round(faultRunsMs) },
   };
 }

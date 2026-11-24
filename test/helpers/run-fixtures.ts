@@ -24,7 +24,19 @@ export function mutant(overrides: Partial<MutantRecord> = {}): MutantRecord {
 }
 
 export function batch(overrides: Partial<BatchReport> = {}): BatchReport {
-  return { index: 0, files: ['src/a.ts'], outcome: 'completed', elapsedMs: 10, planned: 1, tested: 1, error: null, ...overrides };
+  return {
+    index: 0,
+    files: ['src/a.ts'],
+    outcome: 'completed',
+    elapsedMs: 10,
+    planned: 1,
+    tested: 1,
+    error: null,
+    strykerStartMs: 6,
+    mutantsMs: 4,
+    mutantsRun: 1,
+    ...overrides,
+  };
 }
 
 export function mutationResult(overrides: Partial<MutationResult> = {}): MutationResult {
@@ -40,6 +52,7 @@ export function mutationResult(overrides: Partial<MutationResult> = {}): Mutatio
     targetConfigIgnored: null,
     strykerVersion: '10.1.1',
     dryRunNetMs: 5,
+    timings: { batchesStarted: 1, strykerStartMs: 6, dryRunNetMs: 5, mutantsMs: 4, mutantsRun: 1 },
     ...overrides,
   };
 }
@@ -53,9 +66,10 @@ export function site(overrides: Partial<CallSite> = {}): CallSite {
     functionName: 'load',
     path: 'fetch',
     frames: [{ file: 'src/a.ts', line: 5, column: 10, functionName: 'load' }],
+    reachedFrom: [],
     scopeKind: 'changed',
     prior: 0,
-    reachedBy: [{ test: { id: 't1', file: 'test/a.test.ts', name: 'loads' }, durationMs: 5, calls: 1 }],
+    reachedBy: [{ test: { id: 't1', file: 'test/a.test.ts', name: 'loads' }, durationMs: 5, calls: 1, reachedFrom: [] }],
     unattributedCalls: 0,
     ...overrides,
   };
@@ -82,6 +96,7 @@ export function faultRun(overrides: Partial<FaultRunResult> = {}): FaultRunResul
     conflicts: [],
     outOfScopeSites: 0,
     spentMs: 10,
+    timings: { discoveryMs: 8, faultRuns: 0, faultRunsMs: 0 },
     ...overrides,
   };
 }
@@ -121,7 +136,14 @@ export function faultFinding(overrides: Partial<Finding> = {}): Finding {
     message: 'the call has no timeout of its own and relies on runtime transport defaults',
     severity: severityOf('hang-no-timeout', 0),
     mutation: null,
-    fault: { kind: 'blackhole', verdict: 'hang', path: 'http', tests: ['test/ledger.test.ts > posts a ledger entry'] },
+    fault: {
+      kind: 'blackhole',
+      verdict: 'hang',
+      path: 'http',
+      tests: ['test/ledger.test.ts > posts a ledger entry'],
+      reachedFrom: [],
+      notFaultedFrom: [],
+    },
     ...overrides,
   };
 }
@@ -156,6 +178,7 @@ export function runResult(overrides: Partial<RunResult> = {}): RunResult {
     checked: { mutants: 12, invalidMutants: 0, callSites: 3 },
     findings: [faultFinding(), mutationFinding()],
     invalid: [],
+    notTested: [],
     skipped: [],
     inconclusive: [],
     conflicts: [],
@@ -209,6 +232,7 @@ export function runPlan(overrides: Partial<RunPlan> = {}): RunPlan {
       totalMs: 30_000,
       mutationMs: 18_000,
       faultMs: 12_000,
+      calibrated: false,
       derivation: ['mutation: 1 batch x 10 s assumed Stryker start + 16 mutants x 0.5 s assumed each'],
     },
     ...overrides,

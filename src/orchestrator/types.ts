@@ -3,6 +3,7 @@ import type { FaultKind, FaultVerdictKind, Intensity, MutantStatus } from '../co
 import type { IgnoredFile, ScopeNote } from '../diff-scoper/index.js';
 import type { FileConflict } from '../fault-run/index.js';
 import type { FindingKind, Severity } from '../severity/index.js';
+import type { FaultTimings, MutationTimings } from '../timings/index.js';
 
 export type Level = 'poke' | 'prod' | 'shake';
 
@@ -21,6 +22,8 @@ export interface PhaseReport {
   readonly detail?: string;
   readonly budgetMs: number;
   readonly spentMs: number;
+  /** Where the phase's time went; absent when the phase did not run or failed before reporting it. */
+  readonly timings?: MutationTimings | FaultTimings;
 }
 
 export type FindingSource = 'mutation' | 'fault';
@@ -41,6 +44,10 @@ export interface FaultDetail {
   readonly verdict: FaultVerdictKind;
   readonly path: 'fetch' | 'http';
   readonly tests: readonly string[];
+  /** For a site outside the diff, the changed functions the faulted tests reached it through, as "file function". */
+  readonly reachedFrom: readonly string[];
+  /** Changed functions that also reach the site, but through none of the faulted tests. */
+  readonly notFaultedFrom: readonly string[];
 }
 
 export interface Finding {
@@ -123,6 +130,13 @@ export interface BaselineReport {
   readonly notEvaluated: readonly BaselineEntry[];
 }
 
+/** A scoped file with mutants that were generated but never tested, which leaves the mutation phase unfinished. */
+export interface NotTestedFile {
+  readonly file: string;
+  /** null when the file's mutants were never planned, so their number is unknown. */
+  readonly mutants: number | null;
+}
+
 export interface RunResult {
   readonly status: RunStatus;
   /** Why the run is inconclusive or nothing-checkable; null for the other statuses. */
@@ -141,6 +155,8 @@ export interface RunResult {
   readonly findings: readonly Finding[];
   /** Mutants that could not run, each with whether it failed to compile or crashed, and the first error line. */
   readonly invalid: readonly Item[];
+  /** Per file, the mutants the budget left untested; each mutant is also listed in `skipped`. */
+  readonly notTested: readonly NotTestedFile[];
   readonly skipped: readonly Item[];
   readonly inconclusive: readonly Item[];
   readonly conflicts: readonly FileConflict[];

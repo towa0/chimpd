@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isTestFile, toPosix, WORK_DIR_NAME } from '../core/index.js';
+import { isTestFile, rangeForLine, toPosix, WORK_DIR_NAME, type ScopeRange } from '../core/index.js';
 
 export interface StackFrame {
   /** Absolute path with forward slashes. */
@@ -62,4 +62,25 @@ export function projectFrames(frames: readonly StackFrame[], targetRoot: string)
 
 export function callSiteKey(frame: ProjectFrame): string {
   return `${frame.file}:${frame.line}:${frame.column}`;
+}
+
+export interface ScopedFrame {
+  readonly frame: ProjectFrame;
+  readonly range: ScopeRange;
+}
+
+/** The innermost project frame that lies in a scope range: a call is in scope when changed code is anywhere on its stack. */
+export function scopedFrame(frames: readonly ProjectFrame[], ranges: readonly ScopeRange[]): ScopedFrame | null {
+  for (const frame of frames) {
+    const range = rangeForLine(ranges, frame.file, frame.line);
+    if (range !== null) return { frame, range };
+  }
+  return null;
+}
+
+/** Whether a call is the one a faulted run targets: made at the site, and through code in scope. */
+export function targetsSite(stack: string, mode: { readonly targetRoot: string; readonly siteKey: string; readonly ranges: readonly ScopeRange[] }): boolean {
+  const frames = projectFrames(parseStack(stack), mode.targetRoot);
+  const innermost = frames[0];
+  return innermost !== undefined && callSiteKey(innermost) === mode.siteKey && scopedFrame(frames, mode.ranges) !== null;
 }

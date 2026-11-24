@@ -1,6 +1,7 @@
 import { firstErrorLine, PRESETS } from '../core/index.js';
 import type { BaselineEntry } from '../baseline/index.js';
-import { exitCodeOf, LEVELS, type ExitOptions, type Finding, type Item, type RunResult } from '../orchestrator/index.js';
+import { exitCodeOf, LEVELS, type ExitOptions, type Finding, type Item, type PhaseReport, type RunResult } from '../orchestrator/index.js';
+import { perFaultRunMs, perMutantMs } from '../timings/index.js';
 
 const INDENT = '  ';
 const SHORT_SHA = 7;
@@ -31,6 +32,30 @@ function notChecked(result: RunResult): number {
   return result.skipped.length + result.inconclusive.length + result.conflicts.length;
 }
 
+/** What left a partial run partial; a phase is named only when no single item explains it. */
+function partialGaps(result: RunResult): string {
+  const counted = [
+    notChecked(result) > 0 ? `${notChecked(result)} not checked` : null,
+    result.invalid.length > 0 ? `${result.invalid.length} invalid` : null,
+  ].filter((gap) => gap !== null);
+  if (counted.length > 0) return `${counted.join(', ')}, listed above`;
+  const unfinished = result.phases.filter((phase) => phase.status !== 'completed' && phase.status !== 'not-run');
+  if (unfinished.length === 0) return 'listed above';
+  return unfinished.map((phase) => `the ${phase.name} phase ended ${phase.status}`).join(', ');
+}
+
+function notTestedLine(result: RunResult): string | null {
+  if (result.notTested.length === 0) return null;
+  const counted = result.notTested.reduce((total, entry) => total + (entry.mutants ?? 0), 0);
+  const unplanned = result.notTested.filter((entry) => entry.mutants === null).length;
+  const what = [
+    counted > 0 ? `${plural(counted, 'generated mutant')} not tested` : null,
+    unplanned > 0 ? `the mutants of ${plural(unplanned, 'file')} never planned` : null,
+  ].filter((part) => part !== null);
+  const files = result.notTested.map(({ file, mutants }) => `${file} (${mutants ?? 'never planned'})`);
+  return `${INDENT}NOT CHECKED: ${what.join(' and ')} before the budget ran out: ${files.join(', ')}`;
+}
+
 function verdictLine(result: RunResult, options: ExitOptions): string {
   const code = exitCodeOf(result, options);
   if (result.status === 'error') return `Result: tool error (exit ${code})`;
@@ -47,7 +72,7 @@ function verdictLine(result: RunResult, options: ExitOptions): string {
   }
   if (result.status === 'partial') {
     const strict = options.strict === true ? ', --strict' : '; 2 with --strict';
-    return `Result: ${findings}, coverage partial: ${notChecked(result)} not checked, listed above (exit ${code}${strict})`;
+    return `Result: ${findings}, coverage partial: ${partialGaps(result)} (exit ${code}${strict})`;
   }
   if (result.findings.length > 0) return `Result: ${findings} (exit ${code})`;
   const alsoIgnored = ignored > 0 ? `; ${plural(ignored, 'finding')} ignored` : '';
@@ -96,6 +121,8 @@ function coverageSection(result: RunResult): string[] {
     result.conflicts.length > 0 ? plural(result.conflicts.length, 'conflicting test file') : null,
   ].filter((gap) => gap !== null);
   if (gaps.length > 0) lines.push(`${INDENT}NOT CHECKED: ${gaps.join(', ')}; each is listed below`);
+  const untested = notTestedLine(result);
+  if (untested !== null) lines.push(untested);
   for (const phase of result.phases) {
     if (phase.status === 'completed' || phase.status === 'not-run') continue;
     // A failed phase's reason is an error, shown once under Phases.
@@ -103,6 +130,11 @@ function coverageSection(result: RunResult): string[] {
     lines.push(`${INDENT}NOT CHECKED: the ${phase.name} phase ended ${phase.status}${reason}`);
   }
   if (lines.length === 1 && result.status === 'completed') lines.push(`${INDENT}nothing in scope was left unchecked`);
+  for (const phase of result.phases) {
+    if (phase.name === 'faults' && phase.status === 'completed' && phase.statusReason !== null) {
+      lines.push(`${INDENT}no call site to fault: ${phase.statusReason}`);
+    }
+  }
   return lines;
 }
 
@@ -117,6 +149,12 @@ function findingLines(finding: Finding, rank: number): string[] {
   if (finding.fault !== null) {
     const under = finding.fault.tests.length > 0 ? ` under: ${finding.fault.tests.join('; ')}` : '';
     lines.push(`${INDENT}${INDENT}faulted with ${finding.fault.kind}${under}`);
+    if (finding.fault.reachedFrom.length > 0) {
+      lines.push(`${INDENT}${INDENT}reached from changed code: ${finding.fault.reachedFrom.join(', ')}`);
+    }
+    if (finding.fault.notFaultedFrom.length > 0) {
+      lines.push(`${INDENT}${INDENT}also reached from ${finding.fault.notFaultedFrom.join(', ')}, not faulted at this level`);
+    }
   }
   return lines;
 }
@@ -194,13 +232,34 @@ function conflictSection(result: RunResult): string[] {
   ];
 }
 
+function timingLine(phase: PhaseReport): string | null {
+  const { timings } = phase;
+  if (timings === undefined) return null;
+  if ('mutantsRun' in timings) {
+    if (timings.batchesStarted === 0) return 'Stryker did not finish its start and dry run';
+    const batches = timings.batchesStarted > 1 ? ` over ${timings.batchesStarted} batches` : '';
+    const each = perMutantMs(timings);
+    const mutants =
+      each === null ? 'no mutant run' : `${plural(timings.mutantsRun, 'mutant')} run in ${seconds(timings.mutantsMs)}, ${seconds(each)} each`;
+    return `Stryker start and dry run ${seconds(timings.strykerStartMs)}${batches} (the tests ${seconds(timings.dryRunNetMs)} of it), ${mutants}`;
+  }
+  const discovery = timings.discoveryMs === null ? 'discovery run did not finish' : `discovery run ${seconds(timings.discoveryMs)}`;
+  const each = perFaultRunMs(timings);
+  const runs = each === null ? 'no faulted run' : `${plural(timings.faultRuns, 'faulted run')} in ${seconds(timings.faultRunsMs)}, ${seconds(each)} each`;
+  return `${discovery}, ${runs}`;
+}
+
 function phaseSection(result: RunResult): string[] {
   if (result.phases.length === 0) return [];
   return [
     'Phases:',
-    ...result.phases.map((phase) => {
+    ...result.phases.flatMap((phase) => {
       const spent = phase.status === 'not-run' ? '' : ` ${seconds(phase.spentMs)} of ${seconds(phase.budgetMs)}`;
-      return `${INDENT}${phase.name} ${phase.status}${spent}${phaseReason(phase.statusReason)}`;
+      const timing = timingLine(phase);
+      return [
+        `${INDENT}${phase.name} ${phase.status}${spent}${phaseReason(phase.statusReason)}`,
+        ...(timing === null ? [] : [`${INDENT}${INDENT}${timing}`]),
+      ];
     }),
   ];
 }

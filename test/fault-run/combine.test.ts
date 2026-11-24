@@ -12,6 +12,7 @@ const site: CallSite = {
   functionName: 'call',
   path: 'fetch',
   frames: [{ file: 'src/a.ts', line: 3, column: 10, functionName: 'call' }],
+  reachedFrom: [],
   scopeKind: 'changed',
   prior: 0,
   reachedBy: [],

@@ -1,12 +1,13 @@
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as vitestNode from 'vitest/node';
+import type { ScopeRange } from '../../src/core/index.js';
 import { scopeDiff } from '../../src/diff-scoper/index.js';
 import { pristineFingerprints, type Fingerprints } from '../../src/fault-recon/conflicts.js';
 import { discoverCallSites } from '../../src/fault-run/discover.js';
 import { runFaultedSite, type SiteRun } from '../../src/fault-run/faulted.js';
 import type { CallSite, Discovery } from '../../src/fault-run/types.js';
-import { addPairModule, addSetupFailureModule } from '../helpers/fault-fixtures.js';
+import { addPairModule, addSetupFailureModule, addWrapperModule } from '../helpers/fault-fixtures.js';
 import { createSampleApp, history, type SampleApp } from '../helpers/sample-app.js';
 
 const TIMEOUT_MS = 60_000;
@@ -18,8 +19,17 @@ beforeAll(async () => {
   pristine = await pristineFingerprints();
 });
 
+const scopes = new WeakMap<SampleApp, readonly ScopeRange[]>();
+
+function rangesOf(app: SampleApp): readonly ScopeRange[] {
+  const ranges = scopes.get(app);
+  if (ranges === undefined) throw new Error('discover the app before faulting it');
+  return ranges;
+}
+
 async function discover(app: SampleApp): Promise<Discovery> {
   const scope = await scopeDiff({ repoRoot: app.dir, mode: 'enclosing-functions' });
+  scopes.set(app, scope.ranges);
   return discoverCallSites({
     targetRoot: app.dir,
     configFile: path.join(app.dir, 'vitest.config.ts'),
@@ -44,6 +54,7 @@ function fault(app: SampleApp, site: CallSite): Promise<SiteRun> {
     pristine,
     site,
     tests: site.reachedBy,
+    ranges: rangesOf(app),
     deadlineMs: DEADLINE_MS,
   });
 }
@@ -221,10 +232,39 @@ describe('faulted run boundaries', () => {
         pristine,
         site,
         tests: short,
+        ranges: rangesOf(app),
         deadlineMs: DEADLINE_MS,
       });
       expect(run.tests[0]?.observations).toEqual([
         expect.objectContaining({ requestState: 'pending', testOutcome: 'failed', deadlineHit: false }),
+      ]);
+    },
+    TIMEOUT_MS,
+  );
+});
+
+describe('faulted run through a wrapper', () => {
+  let app: SampleApp;
+  let discovery: Discovery;
+
+  beforeAll(async () => {
+    app = createSampleApp();
+    addWrapperModule(app);
+    discovery = await discover(app);
+  }, TIMEOUT_MS);
+
+  afterAll(() => app.cleanup());
+
+  it(
+    'holds the wrapper call the changed function makes and lets the unchanged caller in the same test through',
+    async () => {
+      const run = await fault(app, siteAt(discovery, app, 'src/http-client.ts', 'await fetch('));
+      expect(run.tests.map(({ test }) => test.name)).toEqual(['loads statuses and places']);
+      expect(run.tests).toEqual([
+        expect.objectContaining({
+          problem: null,
+          observations: [expect.objectContaining({ requestState: 'aborted', abortKind: 'timeout', testOutcome: 'passed' })],
+        }),
       ]);
     },
     TIMEOUT_MS,
