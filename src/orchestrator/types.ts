@@ -130,6 +130,25 @@ export interface BaselineReport {
   readonly notEvaluated: readonly BaselineEntry[];
 }
 
+export interface FaultTally {
+  readonly kind: FaultKind;
+  /** Sites the fault was handled at. */
+  readonly handled: number;
+  /** Sites whose verdict is a finding, ignored ones included. */
+  readonly findings: number;
+  readonly inconclusive: number;
+}
+
+/** Verdict counts for the summary at the end of a report. */
+export interface Tally {
+  /** Mutants killed or timed out. */
+  readonly killed: number;
+  /** Mutants that survived or that no test covers. */
+  readonly survived: number;
+  /** One entry per fault kind that got a verdict, in the order they ran. */
+  readonly faults: readonly FaultTally[];
+}
+
 /** A scoped file with mutants that were generated but never tested, which leaves the mutation phase unfinished. */
 export interface NotTestedFile {
   readonly file: string;
@@ -155,6 +174,7 @@ export interface RunResult {
   readonly findings: readonly Finding[];
   /** Mutants that could not run, each with whether it failed to compile or crashed, and the first error line. */
   readonly invalid: readonly Item[];
+  readonly tally: Tally;
   /** Per file, the mutants the budget left untested; each mutant is also listed in `skipped`. */
   readonly notTested: readonly NotTestedFile[];
   readonly skipped: readonly Item[];

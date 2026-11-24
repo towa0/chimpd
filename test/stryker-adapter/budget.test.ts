@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Clock, ScopeRange } from '../../src/core/index.js';
 import { planBatches, runMutation, type WorkerMessage } from '../../src/stryker-adapter/index.js';
+import type { ProgressEvent } from '../../src/progress/events.js';
 import { createTempRepo, type TempRepo } from '../helpers/temp-repo.js';
 
 const fakeWorker = fileURLToPath(new URL('../fixtures/fake-stryker-worker.mjs', import.meta.url));
@@ -96,6 +97,8 @@ describe('budget enforcement', () => {
       ignoreStatic: true,
       budgetMs: 1200,
       workerEntry: fakeWorker,
+      // The wall-time bounds are about the kill, so the count that sizes the concurrency is kept out of them.
+      countMutants: () => Promise.resolve([{ file: 'src/a.ts', mutants: 3, moduleLevel: 0, reason: null }]),
     });
     const elapsedMs = performance.now() - startedAt;
 
@@ -123,6 +126,41 @@ describe('budget enforcement', () => {
     expect(result.mutants).toEqual([]);
     expect(result.outOfScope).toBe(3);
     expect(result.notTested).toEqual({ reason: 'budget', mutants: 0, unplannedFiles: [] });
+  });
+
+  it('caps the concurrency at the batch mutant count, half the cores and 4, unless one is given', async () => {
+    const optionsFile = path.join(path.dirname(repo.dir), 'options.jsonl');
+    process.env.CHIMPD_FAKE_OPTIONS = optionsFile;
+    try {
+      repo.write('src/a.ts', 'export const f = (a: number): boolean => a > 1 && a < 9;\n');
+      const request = { targetRoot: repo.dir, ranges: [range('src/a.ts')], intensity: 1 as const, ignoreStatic: true, budgetMs: 800, workerEntry: fakeWorker };
+      const many = await runMutation({ ...request, cores: 64 });
+      const few = await runMutation({ ...request, cores: 2 });
+      const given = await runMutation({ ...request, cores: 64, concurrency: 7 });
+      repo.write('src/a.ts', 'export const A = 1;\n');
+      const none = await runMutation({ ...request, cores: 64 });
+      expect([many, few, given, none].map((result) => result.batches[0]?.concurrency)).toEqual([4, 1, 7, 1]);
+      const sent = fs.readFileSync(optionsFile, 'utf8').trim().split('\n').map((line) => (JSON.parse(line) as { concurrency: number }).concurrency);
+      expect(sent).toEqual([4, 1, 7, 1]);
+    } finally {
+      delete process.env.CHIMPD_FAKE_OPTIONS;
+    }
+  });
+
+  it('reports each mutant in scope that gets a result, with the counted total, and not the ignored ones', async () => {
+    const events: ProgressEvent[] = [];
+    repo.write('src/a.ts', 'export const f = (a: number): boolean => a > 1;\nexport const B = 2;\n');
+    await runMutation({
+      targetRoot: repo.dir,
+      ranges: [range('src/a.ts')],
+      intensity: 1,
+      ignoreStatic: true,
+      budgetMs: 1200,
+      workerEntry: fakeWorker,
+      onProgress: (event) => events.push(event),
+    });
+    expect(events).toEqual([{ type: 'mutant-tested', file: 'src/a.ts', status: 'Killed', tested: 1, total: expect.any(Number) as number, at: expect.any(Number) as number }]);
+    expect(events[0]?.type === 'mutant-tested' && (events[0].total ?? 0) > 0).toBe(true);
   });
 
   it('kills the whole process tree, including processes the batch started', async () => {

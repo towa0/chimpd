@@ -19,14 +19,14 @@ describe('command line parsing', () => {
       ),
     ).toEqual({
       kind: 'run',
-      options: { level: 'shake', base: 'main', json: true, strict: true, verbose: true, seed: 17, cwd: path.join(CWD, 'app'), plan: false },
+      options: { level: 'shake', base: 'main', json: true, strict: true, verbose: true, seed: 17, cwd: path.join(CWD, 'app'), plan: false, color: undefined, banner: true },
     });
   });
 
   it('defaults to text, non-strict, no base, no seed and the current directory', () => {
     expect(parseCliArgs(['run', '--level=poke'], CWD)).toEqual({
       kind: 'run',
-      options: { level: 'poke', base: undefined, json: false, strict: false, verbose: false, seed: undefined, cwd: CWD, plan: false },
+      options: { level: 'poke', base: undefined, json: false, strict: false, verbose: false, seed: undefined, cwd: CWD, plan: false, color: undefined, banner: true },
     });
   });
 
@@ -37,6 +37,13 @@ describe('command line parsing', () => {
     });
     expect(error(['run', '--plan'])).toBe('--level is required: poke, prod or shake');
     expect(error(['run', '--plan=yes', '--level', 'poke'])).toContain("Option '--plan' does not take an argument");
+  });
+
+  it('reads --color, --no-color and --no-banner, and rejects both colour flags at once', () => {
+    expect(parseCliArgs(['run', '--level', 'poke', '--color'], CWD)).toMatchObject({ options: { color: true, banner: true } });
+    expect(parseCliArgs(['run', '--level', 'poke', '--no-color', '--no-banner'], CWD)).toMatchObject({ options: { color: false, banner: false } });
+    expect(error(['run', '--level', 'poke', '--color', '--no-color'])).toBe('--color and --no-color cannot be used together');
+    expect(error(['baseline', '--level', 'poke', '--no-banner'])).toBe('--no-banner only applies to chimpd run');
   });
 
   it('keeps an absolute --cwd as given', () => {

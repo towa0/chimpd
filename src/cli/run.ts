@@ -1,13 +1,57 @@
 import fs from 'node:fs';
+import { realNow } from '../core/index.js';
 import { EXIT_CLEAN, EXIT_INCONCLUSIVE, exitCodeOf, runChimpd, type RunOptions, type RunResult } from '../orchestrator/index.js';
 import { exitCodeOfPlan, planRun, type PlanOptions, type RunPlan } from '../plan/index.js';
+import { startProgress, type ProgressDisplay } from '../progress/terminal.js';
 import { renderJson, renderPlanJson, renderPlanText, renderText } from '../reporter/index.js';
+import { renderBanner, showBanner } from '../terminal/banner.js';
+import { colorEnabled, paletteFor, type Env } from '../terminal/color.js';
+import { renderFancyText } from '../terminal/report.js';
 import { parseCliArgs, USAGE } from './args.js';
 import { runBaseline } from './baseline.js';
+
+/** What the CLI knows about the terminal it writes to; without it, output is plain, as for a pipe. */
+export interface CliTerminal {
+  readonly stdoutIsTTY: boolean;
+  readonly stderrIsTTY: boolean;
+  readonly env: Env;
+  stdoutColumns(): number;
+  stderrColumns(): number;
+  /** Returns a function that stops listening. */
+  onResize(listener: () => void): () => void;
+  /** Runs `restore` on process exit, Ctrl-C and termination; returns a function that stops that. */
+  onExit(restore: () => void): () => void;
+}
 
 export interface CliIo {
   stdout(text: string): void;
   stderr(text: string): void;
+  readonly terminal?: CliTerminal;
+}
+
+const PIPED: CliTerminal = {
+  stdoutIsTTY: false,
+  stderrIsTTY: false,
+  env: {},
+  stdoutColumns: () => 80,
+  stderrColumns: () => 80,
+  onResize: () => () => undefined,
+  onExit: () => () => undefined,
+};
+
+function progressOn(io: CliIo, terminal: CliTerminal, color: boolean | undefined): ProgressDisplay {
+  return startProgress(
+    {
+      write: (text) => io.stderr(text),
+      columns: () => terminal.stderrColumns(),
+      onResize: (listener) => terminal.onResize(listener),
+      onExit: (restore) => terminal.onExit(restore),
+      now: realNow,
+      setInterval: (callback, ms) => setInterval(callback, ms).unref(),
+      clearInterval: (handle) => clearInterval(handle as NodeJS.Timeout),
+    },
+    paletteFor(colorEnabled({ flag: color, env: terminal.env, isTTY: true })),
+  );
 }
 
 export interface CliDeps {
@@ -44,6 +88,10 @@ export async function runCli(argv: readonly string[], io: CliIo, deps: Partial<C
   if (parsed.kind === 'baseline') return runBaseline(parsed.options, io, run);
 
   const { options } = parsed;
+  const terminal = io.terminal ?? PIPED;
+  if (showBanner({ stderrIsTTY: terminal.stderrIsTTY, json: options.json, banner: options.banner, env: terminal.env })) {
+    io.stderr(renderBanner(version(), paletteFor(colorEnabled({ flag: options.color, env: terminal.env, isTTY: true }))));
+  }
   if (options.plan) {
     let planned: RunPlan;
     try {
@@ -61,6 +109,8 @@ export async function runCli(argv: readonly string[], io: CliIo, deps: Partial<C
     return exitCodeOfPlan(planned);
   }
 
+  // Target output forwarded by --verbose would land in the middle of a redrawn line.
+  const progress = terminal.stderrIsTTY && !options.verbose ? progressOn(io, terminal, options.color) : null;
   let result: RunResult;
   try {
     result = await run({
@@ -69,12 +119,23 @@ export async function runCli(argv: readonly string[], io: CliIo, deps: Partial<C
       ...(options.base === undefined ? {} : { base: options.base }),
       ...(options.seed === undefined ? {} : { seed: options.seed }),
       ...(options.verbose ? { onTargetOutput: (text: string) => io.stderr(text) } : {}),
+      ...(progress === null ? {} : { onProgress: progress.listener }),
     });
   } catch (error) {
+    progress?.stop();
     io.stderr(`chimpd: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`);
     return EXIT_INCONCLUSIVE;
   }
+  progress?.stop();
   const exit = { strict: options.strict };
-  io.stdout(options.json ? renderJson(result, exit) : renderText(result, exit));
+  const palette = paletteFor(colorEnabled({ flag: options.color, env: terminal.env, isTTY: terminal.stdoutIsTTY }));
+  const fancy = terminal.stdoutIsTTY || palette.enabled;
+  io.stdout(
+    options.json
+      ? renderJson(result, exit)
+      : fancy
+        ? renderFancyText(result, exit, palette, terminal.stdoutColumns())
+        : renderText(result, exit),
+  );
   return exitCodeOf(result, exit);
 }

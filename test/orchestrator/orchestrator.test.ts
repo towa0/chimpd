@@ -15,6 +15,7 @@ import {
 import { renderText } from '../../src/reporter/index.js';
 import type { MutationRequest } from '../../src/stryker-adapter/index.js';
 import { readTimings } from '../../src/timings/index.js';
+import type { ProgressEvent } from '../../src/progress/events.js';
 import { batch, faultRun, mutant, mutationResult, site, siteResult } from '../helpers/run-fixtures.js';
 import { createTempRepo, type TempRepo } from '../helpers/temp-repo.js';
 
@@ -990,6 +991,23 @@ describe('error reporting', () => {
     const recorded = readTimings(repo.dir);
     expect(recorded).toEqual([{ at: expect.any(String) as string, level: 'poke', mutation: mutationTimings, faults: faultTimings }]);
     expect(repo.git('status', '--porcelain')).toBe('');
+  });
+
+  it('reports each phase start and end to the progress listener and hands it to both phases', async () => {
+    const repo = changedRepo();
+    const events: ProgressEvent[] = [];
+    const run = harness(repo, { runMutation: () => Promise.resolve(mutationResult({ mutants: [killed] })) });
+    const result = await runChimpd(run.options({ onProgress: (event) => events.push(event) }));
+    expect(events.map((event) => [event.type, 'phase' in event ? event.phase : null])).toEqual([
+      ['phase-start', 'mutation'],
+      ['phase-end', 'mutation'],
+      ['phase-start', 'faults'],
+      ['phase-end', 'faults'],
+    ]);
+    expect(events[0]).toMatchObject({ budgetMs: phase(result, 'mutation')?.budgetMs });
+    expect(events[1]).toMatchObject({ status: 'completed' });
+    expect(run.mutationRequests[0]?.onProgress).toBeDefined();
+    expect(run.faultRequests[0]?.onProgress).toBeDefined();
   });
 
   it('records no timings when no phase ran', async () => {

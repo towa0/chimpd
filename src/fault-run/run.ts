@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import { PRESETS, realNow, startBudget, type FaultKind, type Intensity, type ScopeRange } from '../core/index.js';
 import { INJECTORS } from '../fault-injector/injectors.js';
+import type { ProgressListener } from '../progress/events.js';
 import { pristineFingerprints } from '../fault-recon/conflicts.js';
 import type { VitestNodeModule } from '../fault-recon/index.js';
 import { combineSite, inconclusiveSite } from './combine.js';
@@ -24,6 +25,8 @@ export interface FaultRunRequest {
   readonly onTargetOutput?: (text: string) => void;
   /** Picks among call sites and tests of equal rank when the caps force a choice. */
   readonly seed?: number;
+  /** Hears of each faulted run that finishes. */
+  readonly onProgress?: ProgressListener;
 }
 
 export const DEFAULT_TEST_DEADLINE_MS = 2000;
@@ -74,6 +77,7 @@ export async function runFaults(request: FaultRunRequest): Promise<FaultRunResul
   let outOfBudget = false;
   let faultRuns = 0;
   let faultRunsMs = 0;
+  const plannedRuns = kinds.length * selection.planned.length;
 
   // Kind by kind, so a short budget drops the later kinds before it drops black hole coverage of any site.
   for (const kind of kinds) {
@@ -94,6 +98,7 @@ export async function runFaults(request: FaultRunRequest): Promise<FaultRunResul
         faultRuns += 1;
         faultRunsMs += realNow() - runStartedAt;
         results.push(combineSite(site, run.tests, kind));
+        request.onProgress?.({ type: 'site-faulted', file: site.file, line: site.line, kind, done: faultRuns, total: plannedRuns, at: realNow() });
       }
     }
   }

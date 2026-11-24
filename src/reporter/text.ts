@@ -6,7 +6,7 @@ import { perFaultRunMs, perMutantMs } from '../timings/index.js';
 const INDENT = '  ';
 const SHORT_SHA = 7;
 
-function seconds(ms: number): string {
+export function seconds(ms: number): string {
   return `${(ms / 1000).toFixed(1)} s`;
 }
 
@@ -19,7 +19,7 @@ function phaseReason(reason: string | null): string {
   return reason === null ? '' : `: ${firstErrorLine(reason) ?? reason}`;
 }
 
-function plural(count: number, noun: string): string {
+export function plural(count: number, noun: string): string {
   return `${count} ${noun}${count === 1 ? '' : 's'}`;
 }
 
@@ -56,7 +56,7 @@ function notTestedLine(result: RunResult): string | null {
   return `${INDENT}NOT CHECKED: ${what.join(' and ')} before the budget ran out: ${files.join(', ')}`;
 }
 
-function verdictLine(result: RunResult, options: ExitOptions): string {
+export function verdictLine(result: RunResult, options: ExitOptions): string {
   const code = exitCodeOf(result, options);
   if (result.status === 'error') return `Result: tool error (exit ${code})`;
   if (result.status === 'nothing-in-scope') return `Result: nothing in scope (exit ${code})`;
@@ -138,25 +138,28 @@ function coverageSection(result: RunResult): string[] {
   return lines;
 }
 
+/** What a finding says under its location line: the reason, then how a fault was applied. */
+export function findingDetails(finding: Finding): string[] {
+  const lines = [`${finding.kind}: ${finding.message}`];
+  if (finding.fault !== null) {
+    const under = finding.fault.tests.length > 0 ? ` under: ${finding.fault.tests.join('; ')}` : '';
+    lines.push(`faulted with ${finding.fault.kind}${under}`);
+    if (finding.fault.reachedFrom.length > 0) lines.push(`reached from changed code: ${finding.fault.reachedFrom.join(', ')}`);
+    if (finding.fault.notFaultedFrom.length > 0) {
+      lines.push(`also reached from ${finding.fault.notFaultedFrom.join(', ')}, not faulted at this level`);
+    }
+  }
+  return lines;
+}
+
 function findingLines(finding: Finding, rank: number): string[] {
   const { severity } = finding;
   const where = location(finding.file, finding.line, finding.column);
   const name = finding.functionName === null ? '' : ` in ${finding.functionName}`;
-  const lines = [
+  return [
     `${INDENT}${rank}. [${severity.level} ${severity.score}] ${where}${name}`,
-    `${INDENT}${INDENT}${finding.kind}: ${finding.message}`,
+    ...findingDetails(finding).map((line) => `${INDENT}${INDENT}${line}`),
   ];
-  if (finding.fault !== null) {
-    const under = finding.fault.tests.length > 0 ? ` under: ${finding.fault.tests.join('; ')}` : '';
-    lines.push(`${INDENT}${INDENT}faulted with ${finding.fault.kind}${under}`);
-    if (finding.fault.reachedFrom.length > 0) {
-      lines.push(`${INDENT}${INDENT}reached from changed code: ${finding.fault.reachedFrom.join(', ')}`);
-    }
-    if (finding.fault.notFaultedFrom.length > 0) {
-      lines.push(`${INDENT}${INDENT}also reached from ${finding.fault.notFaultedFrom.join(', ')}, not faulted at this level`);
-    }
-  }
-  return lines;
 }
 
 function findingsSection(result: RunResult, shown: number): string[] {
@@ -264,22 +267,47 @@ function phaseSection(result: RunResult): string[] {
   ];
 }
 
-export function renderText(result: RunResult, options: ExitOptions = {}): string {
+export type SectionName =
+  | 'header'
+  | 'error'
+  | 'scope'
+  | 'coverage'
+  | 'invalid'
+  | 'findings'
+  | 'ignored'
+  | 'baseline'
+  | 'skipped'
+  | 'inconclusive'
+  | 'conflicts'
+  | 'phases'
+  | 'result';
+
+export interface TextSection {
+  readonly name: SectionName;
+  readonly lines: readonly string[];
+}
+
+/** The report's sections in order, empty ones left out; the plain report joins them with a blank line. */
+export function textSections(result: RunResult, options: ExitOptions = {}): TextSection[] {
   const shown = PRESETS[LEVELS[result.level]].findingsShown;
-  const sections = [
-    header(result),
-    result.status === 'error' ? [`Error: ${firstErrorLine(result.error) ?? 'unknown error'}`] : [],
-    scopeSection(result),
-    coverageSection(result),
-    groupedSection('Invalid mutants', result.invalid, (entry) => entry.reason),
-    findingsSection(result, shown),
-    ignoredSection(result),
-    baselineSection(result),
-    groupedSection('Skipped', result.skipped, (entry) => `${sourceOf(entry)}: ${entry.reason}`),
-    inconclusiveSection(result.inconclusive),
-    conflictSection(result),
-    phaseSection(result),
-    [verdictLine(result, options)],
-  ].filter((section) => section.length > 0);
-  return `${sections.map((section) => section.join('\n')).join('\n\n')}\n`;
+  const sections: TextSection[] = [
+    { name: 'header', lines: header(result) },
+    { name: 'error', lines: result.status === 'error' ? [`Error: ${firstErrorLine(result.error) ?? 'unknown error'}`] : [] },
+    { name: 'scope', lines: scopeSection(result) },
+    { name: 'coverage', lines: coverageSection(result) },
+    { name: 'invalid', lines: groupedSection('Invalid mutants', result.invalid, (entry) => entry.reason) },
+    { name: 'findings', lines: findingsSection(result, shown) },
+    { name: 'ignored', lines: ignoredSection(result) },
+    { name: 'baseline', lines: baselineSection(result) },
+    { name: 'skipped', lines: groupedSection('Skipped', result.skipped, (entry) => `${sourceOf(entry)}: ${entry.reason}`) },
+    { name: 'inconclusive', lines: inconclusiveSection(result.inconclusive) },
+    { name: 'conflicts', lines: conflictSection(result) },
+    { name: 'phases', lines: phaseSection(result) },
+    { name: 'result', lines: [verdictLine(result, options)] },
+  ];
+  return sections.filter((section) => section.lines.length > 0);
+}
+
+export function renderText(result: RunResult, options: ExitOptions = {}): string {
+  return `${textSections(result, options).map((section) => section.lines.join('\n')).join('\n\n')}\n`;
 }

@@ -22,6 +22,7 @@ import { applyIgnores, BASELINE_FILE, loadBaseline, type Baseline } from '../bas
 import { DEFAULT_BASE, findOutgoingCalls, scopeDiff, type DiffScope, type DiffScopeOptions } from '../diff-scoper/index.js';
 import { runFaults, type CallSiteResult, type FaultRunRequest, type FaultRunResult } from '../fault-run/index.js';
 import { runMutation, type MutationRequest, type MutationResult } from '../stryker-adapter/index.js';
+import type { ProgressListener } from '../progress/events.js';
 import { recordTimings, type FaultTimings, type MutationTimings, type RunTimings } from '../timings/index.js';
 import {
   boundaryRanges,
@@ -31,7 +32,7 @@ import {
   type BoundaryOptions,
 } from '../test-only-scoper/index.js';
 import { mutationBudgetMs } from './budget.js';
-import { faultItems, mutationItems, notTestedFiles, NOTHING_CHECKED, SUITE_FAILS, type PhaseItems } from './findings.js';
+import { faultItems, mutationItems, notTestedFiles, NOTHING_CHECKED, SUITE_FAILS, tallyOf, type PhaseItems } from './findings.js';
 import {
   ChimpdError,
   findVitestConfig,
@@ -90,6 +91,8 @@ export interface RunOptions {
   readonly deps?: Partial<OrchestratorDeps>;
   /** Receives what the target's own tests write to stdout and stderr in either phase; discarded without one. */
   readonly onTargetOutput?: (text: string) => void;
+  /** Hears each phase start and end, and each mutant and faulted run that finishes. */
+  readonly onProgress?: ProgressListener;
 }
 
 function messageOf(error: unknown): string {
@@ -153,6 +156,8 @@ function mutationPhaseStatus(result: MutationResult): { status: PhaseStatus; rea
 function scopedFiles(ranges: readonly ScopeRange[]): string[] {
   return [...new Set(ranges.map((range) => range.file))].sort();
 }
+
+const EMPTY_TALLY = { killed: 0, survived: 0, faults: [] };
 
 const EMPTY_ITEMS: PhaseItems = { checked: NOTHING_CHECKED, findings: [], invalid: [], skipped: [], inconclusive: [] };
 
@@ -260,7 +265,10 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
   const seed = options.seed ?? randomInt(0, MAX_SEED);
   const base = options.base ?? DEFAULT_BASE;
   const targetRoot = path.resolve(options.cwd);
-  const output = options.onTargetOutput === undefined ? {} : { onTargetOutput: options.onTargetOutput };
+  const output = {
+    ...(options.onTargetOutput === undefined ? {} : { onTargetOutput: options.onTargetOutput }),
+    ...(options.onProgress === undefined ? {} : { onProgress: options.onProgress }),
+  };
 
   let gitInfo: GitInfo | null = null;
   let runScope: RunScope | null = null;
@@ -275,6 +283,7 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
     checked: NOTHING_CHECKED,
     findings: [],
     invalid: [],
+    tally: EMPTY_TALLY,
     notTested: [],
     skipped: [],
     inconclusive: [],
@@ -331,6 +340,10 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
   }
 
   const phases: PhaseReport[] = [];
+  const endPhase = (report: PhaseReport): void => {
+    phases.push(report);
+    options.onProgress?.({ type: 'phase-end', phase: report.name, status: report.status, spentMs: report.spentMs, at: now() });
+  };
   const collected: PhaseItems[] = [{ checked: NOTHING_CHECKED, findings: [], invalid: [], skipped: plan.scopeItems, inconclusive: [] }];
   const conflicts: FaultRunResult['conflicts'][number][] = [];
   const considered: MutantRecord[] = [];
@@ -353,6 +366,7 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
     phases.push({ name: 'mutation', status: 'not-run', statusReason: reason, budgetMs: 0, spentMs: 0 });
   } else {
     const startedAt = now();
+    options.onProgress?.({ type: 'phase-start', phase: 'mutation', budgetMs: mutationMs, at: startedAt });
     try {
       const mutation = await deps.runMutation({
         targetRoot,
@@ -370,7 +384,7 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
         ...output,
       });
       const { status, reason, detail } = mutationPhaseStatus(mutation);
-      phases.push({
+      endPhase({
         name: 'mutation',
         status,
         statusReason: reason,
@@ -391,7 +405,7 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
         collected.push(mutationItems(mutation, report.mutants, report.coveredNotKilled));
       }
     } catch (error) {
-      phases.push({
+      endPhase({
         name: 'mutation',
         status: 'error',
         statusReason: reasonOf(error),
@@ -409,8 +423,9 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
   } else {
     const faultMs = Math.round(budget.remainingMs());
     const startedAt = now();
+    options.onProgress?.({ type: 'phase-start', phase: 'faults', budgetMs: Math.max(0, faultMs), at: startedAt });
     if (faultMs <= 0) {
-      phases.push({
+      endPhase({
         name: 'faults',
         status: 'budget-exhausted',
         statusReason: 'no budget was left for the fault phase',
@@ -438,7 +453,7 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
         const reachedNothing =
           faults.status === 'completed' &&
           faults.results.length + faults.skipped.length + faults.conflicts.length + unreached.length === 0;
-        phases.push({
+        endPhase({
           name: 'faults',
           status: faults.status,
           statusReason: reachedNothing ? NO_OUTGOING_CALL : faults.statusReason,
@@ -455,7 +470,7 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
           collected.push(filesNotChecked('fault', plan.faultRanges, `not faulted: ${faults.statusReason ?? faults.status}`));
         }
       } catch (error) {
-        phases.push({
+        endPhase({
           name: 'faults',
           status: 'error',
           statusReason: reasonOf(error),
@@ -502,6 +517,7 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
     checked,
     findings,
     invalid,
+    tally: tallyOf(considered, faulted),
     notTested,
     skipped,
     inconclusive,

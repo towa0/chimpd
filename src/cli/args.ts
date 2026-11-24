@@ -13,6 +13,10 @@ export interface CliOptions {
   readonly cwd: string;
   /** Print what a run would do, without running mutants or faults. */
   readonly plan: boolean;
+  /** true with --color, false with --no-color, undefined without either: then the environment and the terminal decide. */
+  readonly color: boolean | undefined;
+  /** False with --no-banner. */
+  readonly banner: boolean;
 }
 
 export interface BaselineCliOptions {
@@ -34,6 +38,7 @@ export type ParsedArgs =
 
 export const USAGE = [
   'Usage: chimpd run --level poke|prod|shake [--plan] [--base <ref>] [--json] [--strict] [--verbose] [--seed <n>] [--cwd <dir>]',
+  '                  [--color | --no-color] [--no-banner]',
   '       chimpd baseline --level poke|prod|shake [--prune] [--base <ref>] [--verbose] [--seed <n>] [--cwd <dir>]',
   '',
   'run checks the branch; baseline runs the same check and writes its findings to chimpd-baseline.json.',
@@ -48,6 +53,9 @@ export const USAGE = [
   "  --verbose       pass on what the project's own tests print, to stderr",
   '  --seed <n>      breaks ties when a cap or the budget forces a choice; picked and printed when omitted',
   '  --cwd <dir>     the project to check; default the current directory',
+  '  --color         run only: colour the report even when the output is not a terminal',
+  '  --no-color      run only: never colour; NO_COLOR does the same',
+  '  --no-banner     run only: leave out the banner shown on an interactive terminal',
   '  -h, --help      print this help',
   '  --version       print the version',
   '',
@@ -99,7 +107,7 @@ export function parseCliArgs(argv: readonly string[], defaultCwd: string): Parse
   const cwd = path.resolve(defaultCwd, values.cwd ?? '.');
 
   if (command === 'baseline') {
-    const runOnly = (['plan', 'json', 'strict'] as const).find((name) => values[name] === true);
+    const runOnly = (['plan', 'json', 'strict', 'color', 'no-color', 'no-banner'] as const).find((name) => values[name] === true);
     if (runOnly !== undefined) return { kind: 'error', message: `--${runOnly} only applies to chimpd run` };
     return {
       kind: 'baseline',
@@ -107,6 +115,7 @@ export function parseCliArgs(argv: readonly string[], defaultCwd: string): Parse
     };
   }
   if (values.prune === true) return { kind: 'error', message: '--prune only applies to chimpd baseline' };
+  if (values.color === true && values['no-color'] === true) return { kind: 'error', message: '--color and --no-color cannot be used together' };
 
   return {
     kind: 'run',
@@ -119,6 +128,8 @@ export function parseCliArgs(argv: readonly string[], defaultCwd: string): Parse
       seed,
       cwd,
       plan: values.plan === true,
+      color: values.color === true ? true : values['no-color'] === true ? false : undefined,
+      banner: values['no-banner'] !== true,
     },
   };
 }
@@ -138,6 +149,9 @@ function parse(argv: readonly string[]) {
       cwd: { type: 'string' },
       plan: { type: 'boolean' },
       prune: { type: 'boolean' },
+      color: { type: 'boolean' },
+      'no-color': { type: 'boolean' },
+      'no-banner': { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
       version: { type: 'boolean' },
     },

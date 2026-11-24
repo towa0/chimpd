@@ -2,7 +2,7 @@ import { firstErrorLine, type FaultKind, type MutantRecord, type Preset } from '
 import type { CallSite, CallSiteResult, FaultRunResult, SkipReason } from '../fault-run/index.js';
 import { mutationFindingKind, priorOf, severityOf } from '../severity/index.js';
 import type { MutationResult } from '../stryker-adapter/index.js';
-import type { Checked, Finding, Item, NotTestedFile } from './types.js';
+import type { Checked, FaultTally, Finding, Item, NotTestedFile, Tally } from './types.js';
 
 export const NOTHING_CHECKED: Checked = { mutants: 0, invalidMutants: 0, callSites: 0 };
 
@@ -100,6 +100,20 @@ export function mutationItems(
   };
   const invalid = considered.filter((mutant) => INVALID_STATUSES.has(mutant.status)).map((mutant) => mutantItem(mutant, invalidReason(mutant)));
   return { checked, findings, invalid, skipped, inconclusive: [] };
+}
+
+export function tallyOf(mutants: readonly MutantRecord[], faulted: readonly CallSiteResult[]): Tally {
+  const byKind = new Map<FaultTally['kind'], FaultTally>();
+  for (const result of faulted) {
+    const entry = byKind.get(result.kind) ?? { kind: result.kind, handled: 0, findings: 0, inconclusive: 0 };
+    const verdict = result.verdict === 'inconclusive' ? 'inconclusive' : result.findingKind === null ? 'handled' : 'findings';
+    byKind.set(result.kind, { ...entry, [verdict]: entry[verdict] + 1 });
+  }
+  return {
+    killed: mutants.filter((mutant) => mutant.status === 'Killed' || mutant.status === 'Timeout').length,
+    survived: mutants.filter((mutant) => mutant.status === 'Survived' || mutant.status === 'NoCoverage').length,
+    faults: [...byKind.values()],
+  };
 }
 
 /** The considered mutants left untested, counted per file, with the files whose mutants were never planned. */

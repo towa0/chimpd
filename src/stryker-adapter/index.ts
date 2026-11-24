@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import {
   ensureWorkDir,
@@ -16,6 +17,8 @@ import {
   type MutantStatus,
   type ScopeRange,
 } from '../core/index.js';
+import { countMutants } from '../plan/mutants.js';
+import type { ProgressListener } from '../progress/events.js';
 import type { MutationTimings } from '../timings/index.js';
 import { planBatches, type Batch } from './batches.js';
 import { decideChecker, strykerVersion, type CheckerDecision } from './checker.js';
@@ -36,7 +39,12 @@ export interface MutationRequest {
   readonly intensity: Intensity;
   readonly ignoreStatic: boolean;
   readonly budgetMs: number;
+  /** Stryker's process count for every batch; capped by the batch's mutant count and the cores when omitted. */
   readonly concurrency?: number;
+  /** The machine's core count; os.availableParallelism() when omitted. */
+  readonly cores?: number;
+  /** Replaces the in-memory mutant count that sizes the concurrency. */
+  readonly countMutants?: typeof countMutants;
   readonly vitestConfigFile?: string;
   /** Replaces the Stryker child process entry point; it must also be loadable as the reporter plugin. */
   readonly workerEntry?: string;
@@ -48,6 +56,8 @@ export interface MutationRequest {
   readonly onTargetOutput?: (text: string) => void;
   /** Orders files of equal prior across batches, which decides what a short budget leaves untested. */
   readonly seed?: number;
+  /** Hears of each mutant in scope that gets a result. */
+  readonly onProgress?: ProgressListener;
 }
 
 /** dry-run-failed: the target's own tests failed or errored with no mutant active, so no mutant was judged. */
@@ -68,6 +78,8 @@ export interface BatchReport {
   readonly mutantsMs: number | null;
   /** Mutants Stryker ran or type-checked after the dry run; ignored ones are not counted. */
   readonly mutantsRun: number;
+  /** The concurrency the batch ran with; null when it was not launched. */
+  readonly concurrency: number | null;
 }
 
 export interface TestInfo {
@@ -205,8 +217,36 @@ interface BatchRun {
   readonly coverageReported: boolean | null;
 }
 
+const MAX_CONCURRENCY = 4;
+
+/**
+ * Stryker starts as many test runners, and type checkers, as its concurrency allows, and each start costs
+ * seconds; more processes than mutants, or than half the cores, only add start-up time and contention.
+ */
+export function cappedConcurrency(mutants: number | null, cores: number): number {
+  const limit = Math.min(Math.floor(cores / 2), MAX_CONCURRENCY);
+  return Math.max(1, mutants === null ? limit : Math.min(mutants, limit));
+}
+
+async function batchMutantCount(batch: Batch, request: MutationRequest): Promise<number | null> {
+  const files = new Set(batch.files.map((entry) => entry.file));
+  try {
+    const counts = await (request.countMutants ?? countMutants)({
+      targetRoot: request.targetRoot,
+      ranges: request.ranges.filter((range) => files.has(range.file)),
+      intensity: request.intensity,
+    });
+    return counts.some((entry) => entry.mutants === null) ? null : counts.reduce((total, entry) => total + (entry.mutants ?? 0), 0);
+  } catch {
+    return null;
+  }
+}
+
 interface BatchContext {
   readonly request: MutationRequest;
+  readonly concurrency: number;
+  /** Called once for each mutant with a result other than ignored. */
+  readonly onResult: (mutant: WireMutant) => void;
   readonly configFile: string;
   readonly checkerEnabled: boolean;
   readonly shareMs: number;
@@ -241,7 +281,7 @@ async function runBatch(batch: Batch, context: BatchContext): Promise<BatchRun> 
       checkerEnabled: context.checkerEnabled,
       pluginPath: entry,
       configFile: context.configFile,
-      ...(request.concurrency === undefined ? {} : { concurrency: request.concurrency }),
+      concurrency: context.concurrency,
       ...(request.vitestConfigFile === undefined ? {} : { vitestConfigFile: request.vitestConfigFile }),
     }),
     onMessage(message) {
@@ -254,7 +294,10 @@ async function runBatch(batch: Batch, context: BatchContext): Promise<BatchRun> 
         plannedCount = message.mutants.length;
         for (const mutant of message.mutants) planned.set(mutant.id, mutant);
       } else if (message.type === 'mutant') {
-        if (message.mutant.status !== 'Ignored' && !tested.has(message.mutant.id)) mutantsRun += 1;
+        if (message.mutant.status !== 'Ignored' && !tested.has(message.mutant.id)) {
+          mutantsRun += 1;
+          context.onResult(message.mutant);
+        }
         tested.set(message.mutant.id, message.mutant);
       }
       request.onWorkerMessage?.(message);
@@ -291,6 +334,7 @@ async function runBatch(batch: Batch, context: BatchContext): Promise<BatchRun> 
       strykerStartMs: dryRunAt === null ? null : Math.round(dryRunAt - launchedAt),
       mutantsMs: dryRunAt === null ? null : Math.round(endedAt - dryRunAt),
       mutantsRun,
+      concurrency: context.concurrency,
     },
   };
 }
@@ -315,7 +359,6 @@ export async function runMutation(request: MutationRequest): Promise<MutationRes
   const preset = PRESETS[request.intensity];
   const batches = planBatches(request.ranges, preset.maxBatches, request.seed);
   const clock = request.clock ?? realClock;
-  const budget = startBudget(request.budgetMs, () => clock.now());
   const configFile = path.join(ensureWorkDir(request.targetRoot), EMPTY_CONFIG_FILE);
   fs.writeFileSync(configFile, '{}\n');
   let checker = decideChecker(request.targetRoot);
@@ -369,13 +412,30 @@ export async function runMutation(request: MutationRequest): Promise<MutationRes
     });
   }
 
+  const counts: (number | null)[] = [];
+  for (const batch of batches) counts.push(await batchMutantCount(batch, request));
+  // Counting is preparation, done in memory; the budget is for the Stryker runs.
+  const budget = startBudget(request.budgetMs, () => clock.now());
+  const total = counts.some((count) => count === null) ? null : counts.reduce<number>((sum, count) => sum + (count ?? 0), 0);
+  let tested = 0;
+  function onResult(mutant: WireMutant): void {
+    if (request.onProgress === undefined) return;
+    const file = relativeFile(request.targetRoot, mutant.fileName);
+    if (rangeForLine(request.ranges, file, mutant.start.line) === null) return;
+    tested += 1;
+    request.onProgress({ type: 'mutant-tested', file, status: mutant.status ?? 'unknown', tested, total, at: clock.now() });
+  }
+
   async function runWithinBudget(batch: Batch): Promise<BatchRun> {
     const remainingBatches = batches.length - batch.index;
+    const concurrency = request.concurrency ?? cappedConcurrency(counts[batch.index] ?? null, request.cores ?? os.availableParallelism());
     const attempt = (): Promise<BatchRun> => {
       const remainingMs = budget.remainingMs();
       return runBatch(batch, {
         request,
         configFile,
+        concurrency,
+        onResult,
         checkerEnabled: checker.enabled,
         shareMs: remainingMs / remainingBatches,
         remainingMs,
@@ -405,6 +465,7 @@ export async function runMutation(request: MutationRequest): Promise<MutationRes
         strykerStartMs: null,
         mutantsMs: null,
         mutantsRun: 0,
+        concurrency: null,
       });
       unplannedFiles.push(...files);
       continue;

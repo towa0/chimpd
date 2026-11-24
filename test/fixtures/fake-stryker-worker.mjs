@@ -15,7 +15,8 @@ const mutant = (id, status) => ({
   static: false,
 });
 
-process.once('message', () => {
+process.once('message', (start) => {
+  if (process.env.CHIMPD_FAKE_OPTIONS) fs.appendFileSync(process.env.CHIMPD_FAKE_OPTIONS, `${JSON.stringify(start.options)}\n`);
   process.stdout.write('FAKE-WORKER-STDOUT\n');
   process.stderr.write('FAKE-WORKER-STDERR\n');
   const grandchild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });

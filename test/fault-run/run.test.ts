@@ -9,6 +9,7 @@ import { pristineFingerprints } from '../../src/fault-recon/conflicts.js';
 import { isRunnableKind, runFaults, type CallSiteResult, type FaultRunResult } from '../../src/fault-run/index.js';
 import { runInstrumented } from '../../src/fault-run/instrumented.js';
 import { selectCallSites } from '../../src/fault-run/select.js';
+import type { ProgressEvent, ProgressListener } from '../../src/progress/events.js';
 import { addPairModule } from '../helpers/fault-fixtures.js';
 import { createSampleApp, history, type SampleApp } from '../helpers/sample-app.js';
 
@@ -20,6 +21,7 @@ interface RunOptions {
   readonly budgetMs?: number;
   readonly now?: () => number;
   readonly seed?: number;
+  readonly onProgress?: ProgressListener;
 }
 
 async function run(app: SampleApp, options: RunOptions): Promise<FaultRunResult> {
@@ -34,6 +36,7 @@ async function run(app: SampleApp, options: RunOptions): Promise<FaultRunResult>
     vitestNode,
     ...(options.now === undefined ? {} : { now: options.now }),
     ...(options.seed === undefined ? {} : { seed: options.seed }),
+    ...(options.onProgress === undefined ? {} : { onProgress: options.onProgress }),
   });
 }
 
@@ -58,7 +61,8 @@ describe('fault run on the sample app', () => {
   it(
     'gives one verdict per changed call site',
     async () => {
-      const result = await run(app, { intensity: 2 });
+      const events: ProgressEvent[] = [];
+      const result = await run(app, { intensity: 2, onProgress: (event) => events.push(event) });
       const held = result.results.filter((entry) => entry.kind === 'blackhole');
       const serverError = result.results.filter((entry) => entry.kind === 'http-500');
 
@@ -98,6 +102,9 @@ describe('fault run on the sample app', () => {
       expect(result.conflicts).toEqual([{ testFile: 'test/notifications.test.ts', patched: ['fetch'] }]);
       expect(result.spentMs).toBeGreaterThan(0);
       expect(result.timings.faultRuns).toBe(8);
+      expect(events.map((event) => (event.type === 'site-faulted' ? [event.done, event.total, event.kind] : null))).toEqual(
+        [1, 2, 3, 4, 5, 6, 7, 8].map((done) => [done, 8, done <= 4 ? 'blackhole' : 'http-500']),
+      );
       expect(result.timings.discoveryMs).toBeGreaterThan(0);
       expect(result.timings.faultRunsMs).toBeGreaterThan(0);
       expect((result.timings.discoveryMs ?? 0) + result.timings.faultRunsMs).toBeLessThanOrEqual(result.spentMs + 1);

@@ -41,6 +41,8 @@ npx chimpd baseline --level prod --prune
 | `--verbose` | Pass on what the project's own tests print. It goes to stderr, so `--json` output stays clean. Without it, that output is discarded. |
 | `--seed <n>` | An integer from 0 to 2147483647 that decides ties when a cap or the budget forces a choice; see [Seed](#seed). Without it, chimpd picks one and prints it in the report. |
 | `--cwd <dir>` | The project to check. Default the current directory. |
+| `--color`, `--no-color` | `run` only. Force colour on, also when stdout is not a terminal, or turn it off; see [Terminal output](#terminal-output). |
+| `--no-banner` | `run` only. Leave out the banner shown on an interactive terminal. |
 
 Uncommitted and untracked files count as part of the branch. When only test files changed, the mutation phase mutates the source files those tests import, and only mutants that a changed test runs are reported. In that case the fault phase does not run.
 
@@ -81,6 +83,8 @@ The exit code is 0 whenever the plan could be computed, and 2 when it could not:
 | Findings shown in the text report | 3 | 5 | 5 |
 
 The mutation phase runs first. The fault phase gets whatever budget is left, including time the mutation phase did not use. A phase with nothing in scope gives its whole share to the other one. Call sites and mutation batches are ordered by a severity prior based on file and function names (payments, auth, storage and similar), so the most sensitive code is checked first when the budget is tight.
+
+Each mutation batch runs Stryker with a concurrency of the smallest of the batch's mutant count, half the machine's cores and 4, at least 1, instead of Stryker's default of one process per core but one. Stryker starts that many test runners, and as many type checkers, and each start costs seconds, so for the few mutants a branch usually has, more processes only lengthen the start-up.
 
 ## Seed
 
@@ -211,7 +215,7 @@ Call sites are found by running the tests, so a call no test makes would leave n
 
 ## Output
 
-The text report shows the diff scope, a coverage summary, the findings most severe first, how many findings were ignored and by what, stale and not-evaluated baseline entries, everything that was skipped or inconclusive with its reason, test files that replace HTTP entry points, the phase outcomes, and a result line. It is plain text, without color. Errors are shown by their first line only; the JSON report keeps the full error.
+The text report shows the diff scope, a coverage summary, the findings most severe first, how many findings were ignored and by what, stale and not-evaluated baseline entries, everything that was skipped or inconclusive with its reason, test files that replace HTTP entry points, the phase outcomes, and a result line. Piped or redirected, it is plain text without colour; on a terminal it gets the layout described under [Terminal output](#terminal-output). Errors are shown by their first line only; the JSON report keeps the full error.
 
 `--json` prints a report with `"schemaVersion": 1`. The version is raised on any change that removes, renames or retypes a field; new fields may appear without a version change, and so may new values of an enumerated field, such as the `invalid-ignore` finding kind. Top-level fields:
 
@@ -227,6 +231,16 @@ The text report shows the diff scope, a coverage summary, the findings most seve
 - `coverage`: `checked` counts, plus `invalid`, `skipped`, `inconclusive` and `conflicts`, each item with its reason, and `notTested`: per file, the mutants that were generated but not tested before the budget ran out (`mutants` is `null` for a file whose mutants were never planned); each of those mutants is also in `skipped`
 
 Every duration is in whole milliseconds. Nothing in scope is dropped silently: whatever was not checked appears under `coverage` and in the text report.
+
+## Terminal output
+
+When stdout or stderr is not a terminal, as in CI logs, pipes and redirects, chimpd writes exactly the plain report above and nothing else. On a terminal it adds, in ASCII only:
+
+- a banner on stderr: a small banana with the name and version. It is left out with `--json`, `--no-banner`, when `CI` is set and when `NO_COLOR` is set.
+- live progress on stderr while a run works, redrawn in place on one line: a header per phase with its budget, a spinner, a bar of mutants tested out of the total or faulted runs out of the planned ones, the time spent against the phase budget, and the file being worked on. Before the first result it says what it waits for, such as Stryker's start and dry run. On a narrow terminal it drops the file, then the bar, then the time, so the line never wraps; it redraws on resize. The cursor is hidden while it runs and shown again when the run ends, fails, is interrupted with Ctrl-C or is terminated. `--verbose` turns the progress off, because the project's own test output would land in the middle of the line.
+- in the report on stdout: bold section headers; each finding on a line of its own that starts with `path:line:col`, which many terminals make clickable, with its reason indented under it; severity in colour, high red, medium yellow, low dim; and, at the end, a summary box with mutants killed, survived, invalid and not tested, the handled, finding and inconclusive results of each fault kind, and the time spent against the budget, followed by the Result line with its exit code. The box is left out on a terminal too narrow for it.
+
+Colour: `--color` colours the report even when stdout is not a terminal, and then uses the terminal layout; `--no-color` turns colour off, and the two cannot be combined. Without either flag, `FORCE_COLOR` (any value but `0` or `false`) forces colour, `NO_COLOR` or `TERM=dumb` turns it off, and otherwise only a terminal gets colour. The terminal layout without colour, under `NO_COLOR` for example, is the same text. `--json` output never changes.
 
 ## Run status
 

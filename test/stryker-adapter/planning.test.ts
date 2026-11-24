@@ -14,6 +14,7 @@ import {
   resolveCheckerTypeScript,
   resolveOutcomes,
   type WireMutant,
+  cappedConcurrency,
 } from '../../src/stryker-adapter/index.js';
 import { repoNodeModules, repoRoot } from '../helpers/temp-repo.js';
 
@@ -218,5 +219,20 @@ describe('outcome resolution', () => {
     expect(reclassifyUncovered(outcomes, null).map((outcome) => outcome.status)).toEqual(['Survived']);
     const withKill = resolveOutcomes(new Map(), new Map([['1', mutant('1', 'Survived')], ['2', mutant('2', 'Killed')]]));
     expect(reclassifyUncovered(withKill, false).map((outcome) => outcome.status)).toEqual(['Survived', 'Killed']);
+  });
+});
+
+describe('cappedConcurrency', () => {
+  it('takes the smallest of the mutant count, half the cores and 4, and never goes below 1', () => {
+    expect(cappedConcurrency(10, 16)).toBe(4);
+    expect(cappedConcurrency(3, 16)).toBe(3);
+    expect(cappedConcurrency(10, 6)).toBe(3);
+    expect(cappedConcurrency(0, 16)).toBe(1);
+    expect(cappedConcurrency(10, 1)).toBe(1);
+  });
+
+  it('falls back to half the cores, at most 4, when the mutant count is unknown', () => {
+    expect(cappedConcurrency(null, 16)).toBe(4);
+    expect(cappedConcurrency(null, 4)).toBe(2);
   });
 });
