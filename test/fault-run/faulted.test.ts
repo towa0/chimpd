@@ -258,12 +258,25 @@ describe('faulted run through a wrapper', () => {
   it(
     'holds the wrapper call the changed function makes and lets the unchanged caller in the same test through',
     async () => {
-      const run = await fault(app, siteAt(discovery, app, 'src/http-client.ts', 'await fetch('));
+      const site = siteAt(discovery, app, 'src/http-client.ts', 'await fetch(');
+      // A deadline well past the changed caller's 300 ms signal, so a loaded runner still lets the signal fire first.
+      const run = await runFaultedSite({
+        targetRoot: app.dir,
+        configFile: path.join(app.dir, 'vitest.config.ts'),
+        vitestNode,
+        pristine,
+        site,
+        tests: site.reachedBy,
+        ranges: rangesOf(app),
+        deadlineMs: 2_000,
+      });
       expect(run.tests.map(({ test }) => test.name)).toEqual(['loads statuses and places']);
       expect(run.tests).toEqual([
         expect.objectContaining({
           problem: null,
-          observations: [expect.objectContaining({ requestState: 'aborted', abortKind: 'timeout', testOutcome: 'passed' })],
+          observations: [
+            expect.objectContaining({ signalDeadlineMs: 300, requestState: 'aborted', abortKind: 'timeout', testOutcome: 'passed' }),
+          ],
         }),
       ]);
     },

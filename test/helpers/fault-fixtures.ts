@@ -168,8 +168,8 @@ export function addCrashOnFaultModule(repo: TempRepo): void {
 }
 
 const WRAPPER_SOURCE = [
-  'export async function getJson(url: string): Promise<unknown> {',
-  '  const response = await fetch(url, { signal: AbortSignal.timeout(100) });',
+  'export async function getJson(url: string, timeoutMs: number): Promise<unknown> {',
+  '  const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });',
   '  return response.json();',
   '}',
   '',
@@ -180,7 +180,8 @@ const STATUSES_SOURCE = [
   '',
   'export async function getStatuses(baseUrl: string): Promise<unknown> {',
   '  try {',
-  '    return await getJson(`${baseUrl}/statuses`);',
+  // 300 ms leaves a loaded runner time to answer in discovery; the faulted test holds the call for longer.
+  '    return await getJson(`${baseUrl}/statuses`, 300);',
   '  } catch {',
   '    return null;',
   '  }',
@@ -192,7 +193,7 @@ const PLACES_SOURCE = [
   "import { getJson } from './http-client.js';",
   '',
   'export function getPlaces(baseUrl: string): Promise<unknown> {',
-  '  return getJson(`${baseUrl}/places`);',
+  '  return getJson(`${baseUrl}/places`, 10_000);',
   '}',
   '',
 ].join('\n');
@@ -231,5 +232,5 @@ export function addWrapperModule(repo: TempRepo): void {
   repo.write('src/places.ts', PLACES_SOURCE);
   repo.write('test/wrapper.test.ts', WRAPPER_TEST);
   repo.branch('origin/main', repo.commit('Add a fetch wrapper and its callers'));
-  repo.edit('src/statuses.ts', '`${baseUrl}/statuses`', '`${baseUrl}/statuses?limit=500`');
+  repo.edit('src/statuses.ts', '`${baseUrl}/statuses`, 300', '`${baseUrl}/statuses?limit=500`, 300');
 }
