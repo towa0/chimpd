@@ -39,7 +39,7 @@ function recordOf(event: InjectedEvent, metadata: CallMetadata | null): Omit<Inj
 export function startInjection(mode: FaultMode, current: () => TestBody | undefined): Session {
   if (mode.faultKind === 'blackhole') throw new Error('the black hole holds calls; it is not injected');
   const inject = INJECTORS[mode.faultKind];
-  if (inject === undefined) throw new Error(`chimpd cannot inject ${mode.faultKind} yet`);
+  if (inject === undefined) throw new Error(`bruise cannot inject ${mode.faultKind} yet`);
   const selected = new Set(mode.testIds);
   const running = new Map<TestBody, RunningBody>();
   const owners = new WeakMap<CallMetadata, TestBody>();

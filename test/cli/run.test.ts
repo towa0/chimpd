@@ -72,7 +72,7 @@ describe('the run command', () => {
   it('reports an unexpected exception on stderr and exits 2', async () => {
     const run = await cli(['run', '--level', 'poke'], new Error('kaboom'));
     expect(run.code).toBe(2);
-    expect(run.stderr).toContain('chimpd: Error: kaboom');
+    expect(run.stderr).toContain('bruise: Error: kaboom');
     expect(run.stdout).toBe('');
   });
 });
@@ -100,7 +100,7 @@ describe('the run command with --plan', () => {
   it('reports an unexpected exception while planning on stderr and exits 2', async () => {
     const run = await cli(['run', '--plan', '--level', 'poke'], runResult(), new Error('plan kaboom'));
     expect(run.code).toBe(2);
-    expect(run.stderr).toContain('chimpd: Error: plan kaboom');
+    expect(run.stderr).toContain('bruise: Error: plan kaboom');
     expect(run.stdout).toBe('');
   });
 });
@@ -135,7 +135,7 @@ describe('argument errors', () => {
   it('print the problem and the usage on stderr and exit 2 without running anything', async () => {
     const run = await cli(['run', '--level', 'gentle']);
     expect(run.code).toBe(2);
-    expect(run.stderr.startsWith("chimpd: --level must be poke, prod or shake, not 'gentle'\n\nUsage: chimpd run")).toBe(true);
+    expect(run.stderr.startsWith("bruise: --level must be poke, prod or shake, not 'gentle'\n\nUsage: bruise run")).toBe(true);
     expect(run.stdout).toBe('');
     expect(run.calls).toEqual([]);
   });
@@ -145,7 +145,7 @@ describe('help and version', () => {
   it('prints the usage and exits 0', async () => {
     const run = await cli(['--help']);
     expect(run.code).toBe(0);
-    expect(run.stdout).toContain('Usage: chimpd run --level poke|prod|shake');
+    expect(run.stdout).toContain('Usage: bruise run --level poke|prod|shake');
     expect(run.stdout).toContain('--strict');
   });
 

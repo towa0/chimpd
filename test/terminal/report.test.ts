@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { renderText } from '../../src/reporter/index.js';
-import { COLORS, PLAIN, stripAnsi } from '../../src/terminal/color.js';
+import { stripAnsi } from '../../src/terminal/color.js';
+import { PLAIN, THEMED } from '../../src/terminal/theme.js';
 import { renderFancyText } from '../../src/terminal/report.js';
 import { severityOf } from '../../src/severity/index.js';
 import { faultFinding, mutationFinding, runResult } from '../helpers/run-fixtures.js';
@@ -41,7 +42,7 @@ describe('terminal report', () => {
 
   it('marks invalid mutants excluded in the summary when they are not a coverage gap', () => {
     const excluded = renderFancyText(runResult({ checked: { mutants: 7, invalidMutants: 3, callSites: 3 }, invalidExcluded: true }), {}, PLAIN, 40);
-    expect(excluded).toContain('Mutants  killed 9, survived 3, invalid 3, excluded, not tested 0');
+    expect(excluded).toContain('Mutants  killed 9, survived 3, invalid 3 (excluded), not tested 0');
     const gap = renderFancyText(runResult({ status: 'partial', checked: { mutants: 0, invalidMutants: 3, callSites: 3 } }), {}, PLAIN, 40);
     expect(gap).toContain('Mutants  killed 9, survived 3, invalid 3, not tested 0');
   });
@@ -59,26 +60,70 @@ describe('terminal report', () => {
     expect(withoutSummary).toBe(plain.slice(0, plain.indexOf('Result:')));
   });
 
-  it('colours severity, verdicts and the Result line, and is the plain-palette text without the codes', () => {
+  it('colours severity by level: high bold magenta, medium blue, low yellow, with the label kept in the text', () => {
     const findings = [
       faultFinding(),
       mutationFinding(),
       mutationFinding({ line: 9, kind: 'no-coverage', severity: severityOf('no-coverage', -30) }),
     ];
-    const coloured = renderFancyText(runResult({ level: 'prod', findings }), {}, COLORS, 100);
-    expect(coloured).toContain('\u001b[31m[high 70]\u001b[39m');
-    expect(coloured).toContain('\u001b[33m[medium 55]\u001b[39m');
-    expect(coloured).toMatch(/\u001b\[2m\[low \d+\]\u001b\[22m/);
-    expect(coloured).toContain('\u001b[32mkilled 9\u001b[39m');
-    expect(coloured).toContain('\u001b[32mhandled 2\u001b[39m');
-    expect(coloured).toContain('\u001b[1m\u001b[31msurvived 3\u001b[39m\u001b[22m');
-    expect(coloured).toContain('\u001b[1mScope: ');
-    expect(coloured).toContain('\u001b[31m\u001b[1mResult: 3 findings (exit 1)\u001b[22m\u001b[39m');
+    const coloured = renderFancyText(runResult({ level: 'prod', findings }), {}, THEMED, 100);
+    expect(coloured).toContain('\u001b[1m\u001b[35m[high 70]\u001b[39m\u001b[22m');
+    expect(coloured).toContain('\u001b[34m[medium 55]\u001b[39m');
+    expect(coloured).toMatch(/\u001b\[33m\[low \d+\]\u001b\[39m/);
+    expect(coloured).toContain('\u001b[2m    survived: EqualityOperator mutant survived every test that covers it: orderTotal > 120\u001b[22m');
     expect(stripAnsi(coloured)).toBe(renderFancyText(runResult({ level: 'prod', findings }), {}, PLAIN, 100));
   });
 
-  it('uses ASCII only', () => {
+  it('colours section titles bold magenta, the summary by role and the box border dim', () => {
+    const coloured = renderFancyText(runResult(), {}, THEMED, 100);
+    expect(coloured).toContain('\u001b[1m\u001b[35mScope: ');
+    expect(coloured).toContain('\u001b[1m\u001b[35mSummary\u001b[39m\u001b[22m');
+    expect(coloured).toContain('\u001b[2m+-----');
+    expect(coloured).toContain('\u001b[2m|\u001b[22m Mutants  ');
+    expect(coloured).toContain('\u001b[32mkilled 9\u001b[39m');
+    expect(coloured).toContain('\u001b[35msurvived 3\u001b[39m');
+    expect(coloured).toContain('\u001b[32mhandled 2\u001b[39m');
+    expect(coloured).toContain('\u001b[35mfindings 1\u001b[39m');
+    expect(coloured).toContain('invalid 0, not tested 0');
+    const warned = renderFancyText(
+      runResult({ checked: { mutants: 7, invalidMutants: 3, callSites: 3 }, invalidExcluded: true, notTested: [{ file: 'src/a.ts', mutants: 2 }] }),
+      {},
+      THEMED,
+      100,
+    );
+    expect(warned).toContain('\u001b[33minvalid 3 (excluded)\u001b[39m');
+    expect(warned).toContain('\u001b[33mnot tested 2\u001b[39m');
+  });
+
+  it('colours the Result line bold by outcome: green clean, magenta findings, yellow partial, red exit 2 or error', () => {
+    const line = (result: Parameters<typeof renderFancyText>[0], strict = false) =>
+      renderFancyText(result, { strict }, THEMED, 100).trimEnd().split('\n').at(-1);
+    expect(line(runResult({ findings: [] }))).toBe('\u001b[1m\u001b[32mResult: clean, everything in scope was checked (exit 0)\u001b[39m\u001b[22m');
+    expect(line(runResult())).toBe('\u001b[1m\u001b[35mResult: 2 findings (exit 1)\u001b[39m\u001b[22m');
+    const partial = runResult({ status: 'partial', findings: [], skipped: [{ source: 'mutation', file: 'src/a.ts', line: 2, reason: 'not tested: budget' }] });
+    expect(line(partial)).toMatch(/^\u001b\[1m\u001b\[33mResult: 0 findings, \u001b\[39m\u001b\[33mcoverage partial/);
+    expect(line(partial, true)).toMatch(/^\u001b\[1m\u001b\[31mResult: /);
+    expect(line(runResult({ status: 'error', error: 'base ref missing', phases: [], findings: [] }))).toMatch(/^\u001b\[1m\u001b\[31mResult: tool error/);
+  });
+
+  it('colours "coverage complete" green and "coverage partial" yellow inside a Result line of another colour', () => {
+    const line = (result: Parameters<typeof renderFancyText>[0]) => renderFancyText(result, {}, THEMED, 100).trimEnd().split('\n').at(-1);
+    const invalid = [{ source: 'mutation' as const, file: 'src/a.ts', line: 2, reason: 'compile error: x' }];
+    expect(line(runResult({ invalid, invalidExcluded: true }))).toBe(
+      '\u001b[1m\u001b[35mResult: 2 findings, \u001b[39m\u001b[32mcoverage complete\u001b[39m\u001b[35m, 1 invalid mutant excluded (exit 1)\u001b[39m\u001b[22m',
+    );
+    const partial = runResult({ status: 'partial', skipped: [{ source: 'mutation', file: 'src/a.ts', line: 2, reason: 'not tested: budget' }] });
+    expect(line(partial)).toContain('\u001b[35mResult: 2 findings, \u001b[39m\u001b[33mcoverage partial\u001b[39m');
+  });
+
+  it('colours nothing with the plain theme', () => {
+    const result = runResult({ checked: { mutants: 7, invalidMutants: 3, callSites: 3 }, invalidExcluded: true });
+    expect(renderFancyText(result, {}, PLAIN, 100)).not.toContain('\u001b[');
+  });
+
+  it('uses ASCII only, with and without colour', () => {
     expect(renderFancyText(runResult(), {}, PLAIN, 100)).toMatch(ASCII);
+    expect(renderFancyText(runResult(), {}, THEMED, 100)).toMatch(/^[\n\x1b\x20-\x7e]*$/);
   });
 
   it('says a phase did not run instead of counting zero', () => {

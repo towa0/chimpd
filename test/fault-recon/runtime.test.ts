@@ -27,7 +27,7 @@ beforeAll(async () => {
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/resource`;
-  eventsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chimpd-runtime-'));
+  eventsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bruise-runtime-'));
 });
 
 afterAll(() => {
@@ -62,7 +62,7 @@ it('does not claim a connection opened in the context of a body that has ended',
   // Request construction runs inside the call's async scope, like the reconnects a client pool makes later.
   const input = {
     toString() {
-      stale ??= new AsyncResource('chimpd-stale-call');
+      stale ??= new AsyncResource('bruise-stale-call');
       return url;
     },
   };

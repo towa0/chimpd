@@ -37,11 +37,11 @@ export type ParsedArgs =
   | { readonly kind: 'error'; readonly message: string };
 
 export const USAGE = [
-  'Usage: chimpd run --level poke|prod|shake [--plan] [--base <ref>] [--json] [--strict] [--verbose] [--seed <n>] [--cwd <dir>]',
+  'Usage: bruise run --level poke|prod|shake [--plan] [--base <ref>] [--json] [--strict] [--verbose] [--seed <n>] [--cwd <dir>]',
   '                  [--color | --no-color] [--no-banner]',
-  '       chimpd baseline --level poke|prod|shake [--prune] [--base <ref>] [--verbose] [--seed <n>] [--cwd <dir>]',
+  '       bruise baseline --level poke|prod|shake [--prune] [--base <ref>] [--verbose] [--seed <n>] [--cwd <dir>]',
   '',
-  'run checks the branch; baseline runs the same check and writes its findings to chimpd-baseline.json.',
+  'run checks the branch; baseline runs the same check and writes its findings to bruise-baseline.json.',
   '',
   'Options:',
   '  --level <name>  poke (2 min), prod (5 min) or shake (10 min); required',
@@ -55,7 +55,7 @@ export const USAGE = [
   '  --cwd <dir>     the project to check; default the current directory',
   '  --color         run only: colour the report even when the output is not a terminal',
   '  --no-color      run only: never colour; NO_COLOR does the same',
-  '  --no-banner     run only: leave out the banner shown on an interactive terminal',
+  '  --no-banner     run only: leave out the header line shown on an interactive terminal',
   '  -h, --help      print this help',
   '  --version       print the version',
   '',
@@ -108,13 +108,13 @@ export function parseCliArgs(argv: readonly string[], defaultCwd: string): Parse
 
   if (command === 'baseline') {
     const runOnly = (['plan', 'json', 'strict', 'color', 'no-color', 'no-banner'] as const).find((name) => values[name] === true);
-    if (runOnly !== undefined) return { kind: 'error', message: `--${runOnly} only applies to chimpd run` };
+    if (runOnly !== undefined) return { kind: 'error', message: `--${runOnly} only applies to bruise run` };
     return {
       kind: 'baseline',
       options: { level, base: values.base, verbose: values.verbose === true, seed, cwd, prune: values.prune === true },
     };
   }
-  if (values.prune === true) return { kind: 'error', message: '--prune only applies to chimpd baseline' };
+  if (values.prune === true) return { kind: 'error', message: '--prune only applies to bruise baseline' };
   if (values.color === true && values['no-color'] === true) return { kind: 'error', message: '--color and --no-color cannot be used together' };
 
   return {

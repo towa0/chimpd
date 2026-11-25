@@ -55,7 +55,7 @@ export interface JsonPlan {
     readonly totalMs: number;
     readonly mutationMs: number;
     readonly faultMs: number;
-    /** Whether every cost it used was measured on an earlier run of this project, from .chimpd/timings.json. */
+    /** Whether every cost it used was measured on an earlier run of this project, from .bruise/timings.json. */
     readonly calibrated: boolean;
     readonly derivation: readonly string[];
   } | null;

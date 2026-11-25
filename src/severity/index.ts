@@ -5,7 +5,7 @@ export { MAX_PRIOR, priorOf, SENSITIVE_PRIOR, STORAGE_PRIOR, tokenize } from './
 
 export type MutationFindingKind = 'survived' | 'no-coverage';
 
-/** invalid-ignore: a chimpd-ignore comment without a reason, which is reported instead of honoured. */
+/** invalid-ignore: a bruise-ignore comment without a reason, which is reported instead of honoured. */
 export type FindingKind = MutationFindingKind | FaultFindingKind | 'invalid-ignore';
 
 export type SeverityLevel = 'high' | 'medium' | 'low';

@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from 'vitest';
-import { exitCodeOf, runChimpd } from '../../src/orchestrator/index.js';
+import { exitCodeOf, runBruise } from '../../src/orchestrator/index.js';
 import { createSampleApp, type SampleApp } from '../helpers/sample-app.js';
 
 const RUN_TIMEOUT_MS = 600_000;
@@ -30,7 +30,7 @@ it(
       ].join('\n'),
     );
     app.commit('Add a type guard');
-    const result = await runChimpd({ cwd: app.dir, level: 'poke' });
+    const result = await runBruise({ cwd: app.dir, level: 'poke' });
 
     expect(result.checked.mutants).toBe(0);
     expect(result.checked.invalidMutants).toBeGreaterThan(0);
@@ -46,7 +46,7 @@ it(
     app = createSampleApp();
     appendToDiscount(app, "export async function ping(): Promise<Response> {\n  return fetch('http://127.0.0.1:9/ping');\n}\n");
     app.commit('Add a ping');
-    const result = await runChimpd({ cwd: app.dir, level: 'poke' });
+    const result = await runBruise({ cwd: app.dir, level: 'poke' });
 
     const line = app.lineOf('src/discount.ts', "return fetch('http://127.0.0.1:9/ping')");
     expect(result.skipped).toContainEqual({
@@ -68,7 +68,7 @@ it(
     app.edit('src/discount.ts', 'orderTotal >= 100', 'orderTotal >= 120');
     app.edit('test/discount.test.ts', 'expect(discountPercent(50)).toBe(0)', 'expect(discountPercent(50)).toBe(1)');
     app.commit('Break the suite');
-    const result = await runChimpd({ cwd: app.dir, level: 'poke' });
+    const result = await runBruise({ cwd: app.dir, level: 'poke' });
 
     expect(result.phases.find((phase) => phase.name === 'mutation')).toMatchObject({
       status: 'inconclusive',
@@ -92,7 +92,7 @@ it(
     app = createSampleApp();
     appendToDiscount(app, 'export function half(n: number): number {\n  return n > 0 ? n / 2 : 0;\n}\n');
     app.commit('Add an untested function');
-    const result = await runChimpd({ cwd: app.dir, level: 'poke' });
+    const result = await runBruise({ cwd: app.dir, level: 'poke' });
 
     const mutation = result.findings.filter((finding) => finding.source === 'mutation');
     expect(mutation.length).toBeGreaterThan(0);

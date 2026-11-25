@@ -33,7 +33,7 @@ export const DEFAULT_TEST_DEADLINE_MS = 2000;
 
 const OUTSIDE_TEST_BODY = 'every call to this site was made outside a test body, at import time or from a hook';
 
-/** Whether chimpd can inject this fault kind; a preset may list kinds it cannot inject yet. */
+/** Whether bruise can inject this fault kind; a preset may list kinds it cannot inject yet. */
 export function isRunnableKind(kind: FaultKind): boolean {
   return kind === 'blackhole' || INJECTORS[kind] !== undefined;
 }

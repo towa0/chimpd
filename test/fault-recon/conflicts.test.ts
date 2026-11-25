@@ -45,7 +45,7 @@ describe('patchedSince', () => {
   });
 
   it('names a replaced http entry point', () => {
-    http.get = () => new http.ClientRequest('http://chimpd.invalid');
+    http.get = () => new http.ClientRequest('http://bruise.invalid');
     expect(patchedSince(pristine)).toEqual(['http.get']);
   });
 
@@ -114,7 +114,7 @@ describe('the test environment', () => {
   });
 
   it('records nothing for a target without jsdom', async () => {
-    const dir = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'chimpd-nodom-'));
+    const dir = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'bruise-nodom-'));
     try {
       fs.writeFileSync(path.join(dir, 'package.json'), '{}');
       expect((await pristineFingerprints(dir)).environment).toEqual({});
@@ -147,7 +147,7 @@ describe('the test environment', () => {
 
   it('names happy-dom instead of calling its globals a patch', () => {
     expect(patchedBeforeTestsReason(['fetch', 'Request'], 'happy-dom')).toBe(
-      'the happy-dom test environment replaces fetch, Request with its own, which chimpd cannot fault yet',
+      'the happy-dom test environment replaces fetch, Request with its own, which bruise cannot fault yet',
     );
     expect(patchedBeforeTestsReason(['fetch'], 'jsdom')).toBe('HTTP entry points were already patched before the tests loaded: fetch');
     expect(patchedBeforeTestsReason(['fetch'], null)).toBe('HTTP entry points were already patched before the tests loaded: fetch');

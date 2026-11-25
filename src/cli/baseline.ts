@@ -9,7 +9,7 @@ import {
   type BaselineEntry,
 } from '../baseline/index.js';
 import type { FaultFindingKind } from '../core/index.js';
-import { ChimpdError, EXIT_CLEAN, EXIT_INCONCLUSIVE, type Finding, type RunOptions, type RunResult } from '../orchestrator/index.js';
+import { BruiseError, EXIT_CLEAN, EXIT_INCONCLUSIVE, type Finding, type RunOptions, type RunResult } from '../orchestrator/index.js';
 import { renderText } from '../reporter/index.js';
 import type { BaselineCliOptions } from './args.js';
 
@@ -23,7 +23,7 @@ function entryCount(count: number): string {
 }
 
 function messageOf(error: unknown): string {
-  if (error instanceof ChimpdError) return error.message;
+  if (error instanceof BruiseError) return error.message;
   return error instanceof Error ? (error.stack ?? error.message) : String(error);
 }
 
@@ -59,7 +59,7 @@ export async function runBaseline(
       ...(options.verbose ? { onTargetOutput: (text: string) => io.stderr(text) } : {}),
     });
   } catch (error) {
-    io.stderr(`chimpd: ${messageOf(error)}\n`);
+    io.stderr(`bruise: ${messageOf(error)}\n`);
     return EXIT_INCONCLUSIVE;
   }
 
@@ -96,7 +96,7 @@ export async function runBaseline(
   ];
   if (!options.prune && stale.size > 0) {
     const one = stale.size === 1;
-    lines.push(`${stale.size} stale ${one ? 'entry' : 'entries'} kept; chimpd baseline --prune removes ${one ? 'it' : 'them'}`);
+    lines.push(`${stale.size} stale ${one ? 'entry' : 'entries'} kept; bruise baseline --prune removes ${one ? 'it' : 'them'}`);
   }
   if (result.status === 'partial') lines.push('The run was partial: findings in what it did not check are not in the baseline');
   io.stdout(`${lines.join('\n')}\n`);

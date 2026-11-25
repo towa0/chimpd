@@ -43,14 +43,14 @@ function countTests(tasks: readonly InnerTask[], state: string): number {
 
 async function runFixture(
   vitestNode: VitestNodeModule,
-  withChimpdSetup: boolean,
+  withBruiseSetup: boolean,
   extra: VitestInlineOptions = {},
 ): Promise<InnerRun> {
   const vitest = await runVitest(vitestNode, {
     root: fixtureRoot,
     configFile: join(fixtureRoot, 'vitest.config.ts'),
     options: { reporters: [{}], ...extra },
-    plugins: withChimpdSetup ? [prependSetupFile()] : [],
+    plugins: withBruiseSetup ? [prependSetupFile()] : [],
   });
   try {
     const files: readonly InnerTask[] = vitest.state.getFiles();
@@ -71,7 +71,7 @@ export function defineSetupOrderSuite(version: string, packageDir: string): void
       process.exitCode = 0;
     });
 
-    it('runs the prepended chimpd setup file before the fixture setup file', async () => {
+    it('runs the prepended bruise setup file before the fixture setup file', async () => {
       const vitestNode = await loadVitest(packageDir, version);
       expect(await runFixture(vitestNode, true)).toEqual({ passed: 1, failed: 0, unhandled: 0 });
     });
@@ -82,7 +82,7 @@ export function defineSetupOrderSuite(version: string, packageDir: string): void
       expect(run).toEqual({ passed: 1, failed: 0, unhandled: 0 });
     });
 
-    it('fails the fixture when the chimpd setup file is not prepended', async () => {
+    it('fails the fixture when the bruise setup file is not prepended', async () => {
       const vitestNode = await loadVitest(packageDir, version);
       expect(await runFixture(vitestNode, false)).toEqual({ passed: 0, failed: 1, unhandled: 0 });
     });

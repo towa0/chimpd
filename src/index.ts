@@ -6,7 +6,7 @@ export {
   EXIT_INCONCLUSIVE,
   exitCodeOf,
   LEVELS,
-  runChimpd,
+  runBruise,
 } from './orchestrator/index.js';
 export type {
   Checked,

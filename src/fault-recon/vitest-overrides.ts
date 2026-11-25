@@ -21,7 +21,7 @@ export function setupFilePath(): string {
 
 export function prependSetupFile(setupFile: string = setupFilePath()): Vite.Plugin {
   return {
-    name: 'chimpd:prepend-setup',
+    name: 'bruise:prepend-setup',
     configureVitest({ project }) {
       project.config.setupFiles.unshift(setupFile);
       // Parallel setup files have no defined order, and ours must run first.

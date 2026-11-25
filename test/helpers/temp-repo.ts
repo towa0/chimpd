@@ -33,7 +33,7 @@ export function assertUnderTemp(dir: string): void {
     throw new Error(`refusing to write git history outside the OS temp dir: ${dir}`);
   }
   if (target === repoRoot || isInside(repoRoot, target) || isInside(target, repoRoot)) {
-    throw new Error(`refusing to write git history in or around the chimpd repository: ${dir}`);
+    throw new Error(`refusing to write git history in or around the bruise repository: ${dir}`);
   }
 }
 
@@ -78,7 +78,7 @@ function removeNodeModulesLink(workDir: string): void {
 }
 
 export function createTempRepo(options: TempRepoOptions = {}): TempRepo {
-  const root = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'chimpd-'));
+  const root = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'bruise-'));
   const dir = path.join(root, 'repo');
   const globalConfig = path.join(root, 'gitconfig-global');
   const systemConfig = path.join(root, 'gitconfig-system');
@@ -89,7 +89,7 @@ export function createTempRepo(options: TempRepoOptions = {}): TempRepo {
   if (options.template !== undefined) {
     fs.cpSync(options.template, dir, {
       recursive: true,
-      filter: (source) => !['node_modules', '.chimpd'].includes(path.basename(source)),
+      filter: (source) => !['node_modules', '.bruise'].includes(path.basename(source)),
     });
   }
   if (options.linkNodeModules === true) {
@@ -111,11 +111,11 @@ export function createTempRepo(options: TempRepoOptions = {}): TempRepo {
       GIT_CONFIG_NOSYSTEM: '1',
       GIT_CEILING_DIRECTORIES: root,
       GIT_TERMINAL_PROMPT: '0',
-      GIT_AUTHOR_NAME: 'chimpd test',
-      GIT_AUTHOR_EMAIL: 'test@chimpd.invalid',
+      GIT_AUTHOR_NAME: 'bruise test',
+      GIT_AUTHOR_EMAIL: 'test@bruise.invalid',
       GIT_AUTHOR_DATE: date,
-      GIT_COMMITTER_NAME: 'chimpd test',
-      GIT_COMMITTER_EMAIL: 'test@chimpd.invalid',
+      GIT_COMMITTER_NAME: 'bruise test',
+      GIT_COMMITTER_EMAIL: 'test@bruise.invalid',
       GIT_COMMITTER_DATE: date,
     };
   }

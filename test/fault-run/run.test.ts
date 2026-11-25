@@ -45,7 +45,7 @@ function verdicts(results: readonly CallSiteResult[]): Record<string, string> {
 }
 
 function workDirEntries(app: SampleApp): string[] {
-  return fs.readdirSync(path.join(app.dir, '.chimpd'));
+  return fs.readdirSync(path.join(app.dir, '.bruise'));
 }
 
 describe('fault run on the sample app', () => {
@@ -324,7 +324,7 @@ describe('instrumented run cleanup', () => {
   it(
     'removes the stub a crashed run left behind, and leaves a live run alone',
     async () => {
-      const workDir = path.join(app.dir, '.chimpd');
+      const workDir = path.join(app.dir, '.bruise');
       const abandoned = path.join(workDir, 'fault-2147483646-crashed');
       const live = path.join(workDir, `fault-${process.pid}-live`);
       fs.mkdirSync(abandoned);

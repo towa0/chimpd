@@ -21,7 +21,7 @@ import {
 const temps: string[] = [];
 
 function tempDir(): string {
-  const dir = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'chimpd-core-'));
+  const dir = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'bruise-core-'));
   temps.push(dir);
   return dir;
 }
@@ -173,10 +173,10 @@ describe('budget', () => {
 });
 
 describe('work directory', () => {
-  it('creates .chimpd with an ignore file that hides it from git', () => {
+  it('creates .bruise with an ignore file that hides it from git', () => {
     const target = tempDir();
     const workDir = ensureWorkDir(target);
-    expect(workDir).toBe(path.join(target, '.chimpd'));
+    expect(workDir).toBe(path.join(target, '.bruise'));
     expect(fs.readFileSync(path.join(workDir, '.gitignore'), 'utf8')).toBe('*\n');
   });
 

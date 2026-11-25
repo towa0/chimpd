@@ -231,7 +231,7 @@ describe('planRun', () => {
     await plan(repo, { level: 'shake' });
     expect(snapshot(repo.dir)).toEqual(before);
     expect(repo.git('status', '--porcelain', '--ignored')).toBe(status);
-    expect(fs.existsSync(path.join(repo.dir, '.chimpd'))).toBe(false);
+    expect(fs.existsSync(path.join(repo.dir, '.bruise'))).toBe(false);
   });
 
   it('plans a test-only change: the source the tests reach, and no fault phase', async () => {
@@ -259,10 +259,10 @@ describe('planRun', () => {
 
   it('still plans with a baseline a run cannot read, and says a run would stop there', async () => {
     const repo = changedRepo();
-    repo.write('chimpd-baseline.json', '{ "version": 7, "entries": [] }\n');
+    repo.write('bruise-baseline.json', '{ "version": 7, "entries": [] }\n');
     const result = await plan(repo);
     expect(result.status).toBe('planned');
-    expect(result.runWouldFail).toBe('chimpd-baseline.json has version 7; this chimpd reads version 1');
+    expect(result.runWouldFail).toBe('bruise-baseline.json has version 7; this version of bruise reads baseline version 1');
     expect(exitCodeOfPlan(result)).toBe(0);
   });
 
@@ -277,7 +277,7 @@ describe('planRun', () => {
 
 describe('planRun failure paths', () => {
   it('cannot plan outside a git repository: error, exit 2', async () => {
-    const dir = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'chimpd-plan-nogit-'));
+    const dir = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'bruise-plan-nogit-'));
     cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }));
     const result = await planRun({ cwd: dir, level: 'poke' });
     expect(result.status).toBe('error');

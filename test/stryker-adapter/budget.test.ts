@@ -76,13 +76,13 @@ describe('budget enforcement', () => {
     for (const file of ['src/a.ts', 'src/b.ts', 'src/c.ts']) repo.write(file, 'export const A = 1;\nexport const B = 2;\n');
     pidFile = path.join(path.dirname(repo.dir), 'grandchildren.txt');
     fs.writeFileSync(pidFile, '');
-    process.env.CHIMPD_FAKE_PIDS = pidFile;
-    process.env.CHIMPD_FAKE_FILE = path.join(repo.dir, 'src/a.ts');
+    process.env.BRUISE_FAKE_PIDS = pidFile;
+    process.env.BRUISE_FAKE_FILE = path.join(repo.dir, 'src/a.ts');
   });
 
   afterEach(() => {
-    delete process.env.CHIMPD_FAKE_PIDS;
-    delete process.env.CHIMPD_FAKE_FILE;
+    delete process.env.BRUISE_FAKE_PIDS;
+    delete process.env.BRUISE_FAKE_FILE;
     repo.cleanup();
   });
 
@@ -130,7 +130,7 @@ describe('budget enforcement', () => {
 
   it('caps the concurrency at the batch mutant count, half the cores and 4, unless one is given', async () => {
     const optionsFile = path.join(path.dirname(repo.dir), 'options.jsonl');
-    process.env.CHIMPD_FAKE_OPTIONS = optionsFile;
+    process.env.BRUISE_FAKE_OPTIONS = optionsFile;
     try {
       repo.write('src/a.ts', 'export const f = (a: number): boolean => a > 1 && a < 9;\n');
       const request = { targetRoot: repo.dir, ranges: [range('src/a.ts')], intensity: 1 as const, ignoreStatic: true, budgetMs: 800, workerEntry: fakeWorker };
@@ -143,7 +143,7 @@ describe('budget enforcement', () => {
       const sent = fs.readFileSync(optionsFile, 'utf8').trim().split('\n').map((line) => (JSON.parse(line) as { concurrency: number }).concurrency);
       expect(sent).toEqual([4, 1, 7, 1]);
     } finally {
-      delete process.env.CHIMPD_FAKE_OPTIONS;
+      delete process.env.BRUISE_FAKE_OPTIONS;
     }
   });
 

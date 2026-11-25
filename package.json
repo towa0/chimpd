@@ -1,14 +1,14 @@
 {
-  "name": "chimpd",
+  "name": "bruise",
   "version": "0.1.0",
-  "description": "Measures whether a TypeScript project's tests catch bugs in the code a branch changed, and whether the outgoing calls that code makes survive a dependency that hangs, answers with an error or a malformed body, or refuses the connection.",
+  "description": "Find the soft spots in your tests. Measures whether a TypeScript project's tests catch bugs in the code a branch changed, and whether the outgoing calls that code makes survive a dependency that hangs, answers with an error or a malformed body, or refuses the connection.",
   "license": "MIT",
   "type": "module",
   "engines": {
     "node": ">=22.12"
   },
   "bin": {
-    "chimpd": "dist/cli/main.js"
+    "bruise": "dist/cli/main.js"
   },
   "exports": {
     ".": {

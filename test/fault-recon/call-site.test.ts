@@ -51,7 +51,7 @@ describe('projectFrames', () => {
       frame('test/pricing.test.ts'),
       frame('src/__tests__/helper.ts'),
       frame('node_modules/undici/index.js'),
-      frame('.chimpd/fault-1/setup.mjs'),
+      frame('.bruise/fault-1/setup.mjs'),
       { file: toPosix(path.resolve('/work/other/src/a.ts')), line: 1, column: 1, functionName: null },
     ];
     expect(projectFrames(frames, root)).toEqual([]);

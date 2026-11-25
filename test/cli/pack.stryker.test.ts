@@ -33,7 +33,7 @@ beforeAll(() => {
   fs.mkdirSync(path.join(dist, 'cli'), { recursive: true });
   fs.writeFileSync(path.join(dist, 'cli', 'main.js'), '#!/usr/bin/env node\nprocess.exit(42);\n');
   fs.writeFileSync(path.join(repoRoot, STALE_FILE), 'export {};\n');
-  workDir = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'chimpd-pack-'));
+  workDir = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'bruise-pack-'));
   // npm is a script on Windows, so it is started through the shell everywhere.
   const packed = JSON.parse(
     execSync(`npm pack --json --pack-destination "${workDir}"`, { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }),
@@ -45,7 +45,7 @@ beforeAll(() => {
   // The packed copy resolves its dependencies through this link, as an installed package would through its own.
   fs.symlinkSync(repoNodeModules, path.join(packageDir, 'node_modules'), 'junction');
   const manifest = JSON.parse(fs.readFileSync(path.join(packageDir, 'package.json'), 'utf8')) as Manifest;
-  binFile = path.join(packageDir, manifest.bin['chimpd'] ?? '');
+  binFile = path.join(packageDir, manifest.bin['bruise'] ?? '');
 }, RUN_TIMEOUT_MS);
 
 afterAll(() => {
@@ -81,10 +81,10 @@ it('builds a fresh dist when it packs, replacing a stale one', () => {
 it('answers --help and rejects bad arguments from the packed bin', () => {
   const help = runBin(['--help']);
   expect(help.status).toBe(0);
-  expect(help.stdout).toContain('Usage: chimpd run --level poke|prod|shake');
+  expect(help.stdout).toContain('Usage: bruise run --level poke|prod|shake');
   const bad = runBin(['run', '--level', 'gentle']);
   expect(bad.status).toBe(2);
-  expect(bad.stderr).toContain("chimpd: --level must be poke, prod or shake, not 'gentle'");
+  expect(bad.stderr).toContain("bruise: --level must be poke, prod or shake, not 'gentle'");
 });
 
 it(

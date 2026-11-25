@@ -19,7 +19,7 @@ afterEach(() => {
 
 describe('temp repo guards', () => {
   it('refuses directories outside the OS temp dir', () => {
-    expect(() => assertUnderTemp(repoRoot)).toThrow(/outside the OS temp dir|chimpd repository/);
+    expect(() => assertUnderTemp(repoRoot)).toThrow(/outside the OS temp dir|bruise repository/);
     expect(() => assertUnderTemp(os.homedir())).toThrow(/outside the OS temp dir/);
     expect(() => assertUnderTemp(fs.realpathSync.native(os.tmpdir()))).toThrow(/outside the OS temp dir/);
   });
@@ -48,7 +48,7 @@ describe('temp repo isolation', () => {
     repo.write('a.txt', 'one\n');
     repo.commit('Add a');
     expect(repo.git('log', '-1', '--format=%an <%ae> | %cn <%ce> | %G?').trim()).toBe(
-      'chimpd test <test@chimpd.invalid> | chimpd test <test@chimpd.invalid> | N',
+      'bruise test <test@bruise.invalid> | bruise test <test@bruise.invalid> | N',
     );
   });
 

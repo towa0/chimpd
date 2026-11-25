@@ -1,4 +1,5 @@
-import type { Palette } from '../terminal/color.js';
+import { visibleLength } from '../terminal/color.js';
+import type { Theme } from '../terminal/theme.js';
 import type { ProgressListener } from './events.js';
 import { applyEvent, INITIAL_STATE, phaseFooter, phaseHeader, renderStatus, type ProgressState } from './render.js';
 
@@ -27,7 +28,7 @@ export interface ProgressDisplay {
   stop(): void;
 }
 
-export function startProgress(terminal: ProgressTerminal, palette: Palette): ProgressDisplay {
+export function startProgress(terminal: ProgressTerminal, theme: Theme): ProgressDisplay {
   let state: ProgressState = INITIAL_STATE;
   let drawn = 0;
   let stopped = false;
@@ -41,9 +42,9 @@ export function startProgress(terminal: ProgressTerminal, palette: Palette): Pro
 
   function draw(): void {
     if (stopped) return;
-    const line = renderStatus(state, { now: terminal.now(), columns: terminal.columns() });
+    const line = renderStatus(state, { now: terminal.now(), columns: terminal.columns() }, theme);
     terminal.write(`${clear()}${line}`);
-    drawn = line.length;
+    drawn = visibleLength(line);
   }
 
   function restore(): void {
@@ -65,12 +66,12 @@ export function startProgress(terminal: ProgressTerminal, palette: Palette): Pro
     listener(event) {
       if (stopped) return;
       if (event.type === 'phase-start') {
-        terminal.write(`${clear()}${phaseHeader(event, palette)}\n`);
+        terminal.write(`${clear()}${phaseHeader(event, theme)}\n`);
         state = applyEvent(state, event);
         draw();
       } else if (event.type === 'phase-end') {
         state = applyEvent(state, event);
-        terminal.write(`${clear()}${phaseFooter(event, palette)}\n`);
+        terminal.write(`${clear()}${phaseFooter(event, theme)}\n`);
       } else {
         state = applyEvent(state, event);
         draw();

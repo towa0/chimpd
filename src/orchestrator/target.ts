@@ -4,8 +4,8 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { VitestNodeModule } from '../fault-recon/index.js';
 
-export class ChimpdError extends Error {
-  override readonly name = 'ChimpdError';
+export class BruiseError extends Error {
+  override readonly name = 'BruiseError';
 }
 
 const CONFIG_NAMES: readonly string[] = ['vitest.config', 'vite.config'].flatMap((stem) =>
@@ -59,15 +59,15 @@ export async function loadTargetVitest(targetRoot: string): Promise<TargetVitest
   try {
     manifestFile = require.resolve('vitest/package.json');
   } catch {
-    throw new ChimpdError(`Vitest is not installed in ${targetRoot}`);
+    throw new BruiseError(`Vitest is not installed in ${targetRoot}`);
   }
   const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8')) as VitestManifest;
   const version = typeof manifest.version === 'string' ? manifest.version : 'unknown';
   if (!isSupportedVitest(version)) {
-    throw new ChimpdError(`Vitest ${version} in ${targetRoot} is not supported; chimpd needs Vitest ${SUPPORTED_VITEST}`);
+    throw new BruiseError(`Vitest ${version} in ${targetRoot} is not supported; bruise needs Vitest ${SUPPORTED_VITEST}`);
   }
   const entry = nodeEntry(manifest);
-  if (entry === null) throw new ChimpdError(`Vitest ${version} in ${targetRoot} has no vitest/node entry point`);
+  if (entry === null) throw new BruiseError(`Vitest ${version} in ${targetRoot} has no vitest/node entry point`);
   const node = (await import(pathToFileURL(path.join(path.dirname(manifestFile), entry)).href)) as VitestNodeModule;
   return { version, node };
 }

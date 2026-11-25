@@ -52,7 +52,7 @@ export function decideChecker(
   const major = Number(resolved.version.split('.')[0]);
   if (!(major < 7)) {
     return disabled(
-      `type checker disabled: chimpd's own TypeScript copy, which the checker loads, is ${resolved.version}; the checker needs TypeScript below 7`,
+      `type checker disabled: bruise's own TypeScript copy, which the checker loads, is ${resolved.version}; the checker needs TypeScript below 7`,
     );
   }
   if (!fs.existsSync(path.join(targetRoot, tsconfigFile))) {

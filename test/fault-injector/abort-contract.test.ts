@@ -7,7 +7,7 @@ import {
   type InterceptionPath,
 } from '../../src/fault-injector/index.js';
 
-const URL_UNDER_TEST = 'http://blackhole.chimpd.invalid/resource';
+const URL_UNDER_TEST = 'http://blackhole.bruise.invalid/resource';
 const ABORT_NAMES = ['AbortError', 'TimeoutError'];
 
 type Send = (signal?: AbortSignal) => Promise<unknown>;

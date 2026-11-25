@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from 'vitest';
-import { exitCodeOf, runChimpd } from '../../src/orchestrator/index.js';
+import { exitCodeOf, runBruise } from '../../src/orchestrator/index.js';
 import { createSampleApp, history, type SampleApp } from '../helpers/sample-app.js';
 
 const RUN_TIMEOUT_MS = 600_000;
@@ -16,7 +16,7 @@ it(
   async () => {
     app = createSampleApp();
     history.boundaryChange(app);
-    const result = await runChimpd({ cwd: app.dir, level: 'poke', seed: 3 });
+    const result = await runBruise({ cwd: app.dir, level: 'poke', seed: 3 });
 
     expect(result.error).toBeNull();
     expect(result.phases.map((phase) => [phase.name, phase.status])).toEqual([
@@ -38,7 +38,7 @@ it(
   async () => {
     app = createSampleApp();
     history.clientChanges(app);
-    const result = await runChimpd({ cwd: app.dir, level: 'prod' });
+    const result = await runBruise({ cwd: app.dir, level: 'prod' });
 
     expect(result.error).toBeNull();
     const faults = result.findings.filter((finding) => finding.source === 'fault');

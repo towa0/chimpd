@@ -13,7 +13,7 @@ afterEach(() => {
 });
 
 function tempDir(): string {
-  const dir = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'chimpd-target-'));
+  const dir = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'bruise-target-'));
   dirs.push(dir);
   return dir;
 }
@@ -63,7 +63,7 @@ describe('loading the target Vitest', () => {
       path.join(dir, 'node_modules/vitest/package.json'),
       JSON.stringify({ name: 'vitest', version: '3.2.4', exports: { './package.json': './package.json' } }),
     );
-    await expect(loadTargetVitest(dir)).rejects.toThrow(`Vitest 3.2.4 in ${dir} is not supported; chimpd needs Vitest >=4.1 <6`);
+    await expect(loadTargetVitest(dir)).rejects.toThrow(`Vitest 3.2.4 in ${dir} is not supported; bruise needs Vitest >=4.1 <6`);
   });
 });
 

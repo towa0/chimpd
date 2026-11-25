@@ -54,9 +54,9 @@ describe('statement hashes', () => {
   });
 });
 
-describe('chimpd-ignore comments', () => {
+describe('bruise-ignore comments', () => {
   it('reads the reason after the colon', () => {
-    const source = '// chimpd-ignore: equivalent mutant, the bound is checked twice\nconst a = 1;\n  //chimpd-ignore:  spaced  \n';
+    const source = '// bruise-ignore: equivalent mutant, the bound is checked twice\nconst a = 1;\n  //bruise-ignore:  spaced  \n';
     expect(new SourceStatements('src/a.ts', source).directives()).toEqual([
       { line: 1, reason: 'equivalent mutant, the bound is checked twice' },
       { line: 3, reason: 'spaced' },
@@ -64,12 +64,12 @@ describe('chimpd-ignore comments', () => {
   });
 
   it('marks a comment without a reason, or with an empty one, as having none', () => {
-    const source = '// chimpd-ignore\n// chimpd-ignore:\n// chimpd-ignore:    \n// chimpd-ignore because\n';
+    const source = '// bruise-ignore\n// bruise-ignore:\n// bruise-ignore:    \n// bruise-ignore because\n';
     expect(new SourceStatements('src/a.ts', source).directives().map(({ reason }) => reason)).toEqual([null, null, null, null]);
   });
 
   it('does not take other words or trailing comments for a directive', () => {
-    const source = '// chimpd-ignored: no\n// chimpd-ignore-next: no\nconst a = 1; // chimpd-ignore: trailing\n';
+    const source = '// bruise-ignored: no\n// bruise-ignore-next: no\nconst a = 1; // bruise-ignore: trailing\n';
     expect(new SourceStatements('src/a.ts', source).directives()).toEqual([]);
   });
 });

@@ -50,7 +50,7 @@ it(
     app.edit('test/discount.test.ts', "  it('applies the discount", "  it('gives the discount from 120 on', () => {\n    expect(discountPercent(120)).toBe(10);\n  });\n\n  it('applies the discount");
     app.commit('Pin the discount threshold');
     const stale = await cli(['run', ...flags]);
-    expect(stale.stdout).toContain('Stale baseline entries (1), matching nothing in scope any more; chimpd baseline --prune removes them:');
+    expect(stale.stdout).toContain('Stale baseline entries (1), matching nothing in scope any more; bruise baseline --prune removes them:');
     expect(stale.code).toBe(0);
 
     const pruned = await cli(['baseline', '--prune', ...flags]);

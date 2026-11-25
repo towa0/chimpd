@@ -201,7 +201,7 @@ export function startRuntime(hooks: RuntimeHooks, config: RuntimeConfig): void {
   runner.runTask = function (this: unknown, task: RunnerTask): unknown {
     if (!session.includes(task)) task.context?.skip();
     const fn = previous === undefined ? hooks.getTestFn(task) : () => previous.call(this, task);
-    if (fn === undefined) throw new Error(`chimpd found no test function for ${task.id}`);
+    if (fn === undefined) throw new Error(`bruise found no test function for ${task.id}`);
     return session.includes(task) ? runBody({ testId: task.id, testFile: task.file.filepath }, fn) : fn();
   };
 

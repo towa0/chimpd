@@ -3,7 +3,7 @@ import fs from 'node:fs';
 
 const mutant = (id, status) => ({
   id,
-  fileName: process.env.CHIMPD_FAKE_FILE,
+  fileName: process.env.BRUISE_FAKE_FILE,
   start: { line: 2, column: 7 },
   end: { line: 2, column: 24 },
   mutatorName: 'EqualityOperator',
@@ -16,11 +16,11 @@ const mutant = (id, status) => ({
 });
 
 process.once('message', (start) => {
-  if (process.env.CHIMPD_FAKE_OPTIONS) fs.appendFileSync(process.env.CHIMPD_FAKE_OPTIONS, `${JSON.stringify(start.options)}\n`);
+  if (process.env.BRUISE_FAKE_OPTIONS) fs.appendFileSync(process.env.BRUISE_FAKE_OPTIONS, `${JSON.stringify(start.options)}\n`);
   process.stdout.write('FAKE-WORKER-STDOUT\n');
   process.stderr.write('FAKE-WORKER-STDERR\n');
   const grandchild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
-  fs.appendFileSync(process.env.CHIMPD_FAKE_PIDS, `${grandchild.pid}\n`);
+  fs.appendFileSync(process.env.BRUISE_FAKE_PIDS, `${grandchild.pid}\n`);
 
   process.send({
     type: 'dry-run',

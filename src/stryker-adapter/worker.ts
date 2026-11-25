@@ -45,7 +45,7 @@ export interface StartMessage {
   readonly options: StrykerOptions;
 }
 
-export const STREAM_REPORTER = 'chimpd-stream';
+export const STREAM_REPORTER = 'bruise-stream';
 
 interface DryRunEvent {
   readonly timing: { readonly net: number };

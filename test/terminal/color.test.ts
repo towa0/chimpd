@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { COLORS, colorEnabled, PLAIN, stripAnsi, visibleLength } from '../../src/terminal/color.js';
+import { colorEnabled, stripAnsi, visibleLength } from '../../src/terminal/color.js';
 
 describe('colour decision', () => {
   it('colours a TTY and nothing else by default', () => {
@@ -25,11 +25,9 @@ describe('colour decision', () => {
   });
 });
 
-describe('palettes', () => {
-  it('leaves text untouched without colour and wraps it in SGR codes with colour', () => {
-    expect(PLAIN.red('x')).toBe('x');
-    expect(COLORS.red('x')).toBe('\u001b[31mx\u001b[39m');
-    expect(visibleLength(COLORS.highlight('abc'))).toBe(3);
-    expect(stripAnsi(COLORS.bold(COLORS.green('ok')))).toBe('ok');
+describe('escape sequences', () => {
+  it('take no columns and strip away', () => {
+    expect(visibleLength('\u001b[1m\u001b[35mabc\u001b[39m\u001b[22m')).toBe(3);
+    expect(stripAnsi('\u001b[1m\u001b[32mok\u001b[39m\u001b[22m')).toBe('ok');
   });
 });

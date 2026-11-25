@@ -307,7 +307,7 @@ describe('ignored findings in the text report', () => {
       runResult({
         findings: [],
         baseline: {
-          file: 'chimpd-baseline.json',
+          file: 'bruise-baseline.json',
           present: true,
           entries: 2,
           stale: [
@@ -318,7 +318,7 @@ describe('ignored findings in the text report', () => {
         },
       }),
     );
-    expect(text).toContain('Stale baseline entries (2), matching nothing in scope any more; chimpd baseline --prune removes them:');
+    expect(text).toContain('Stale baseline entries (2), matching nothing in scope any more; bruise baseline --prune removes them:');
     expect(text).toContain('  src/a.ts: EqualityOperator mutant a > b');
     expect(text).toContain('  src/b.ts: hang-no-timeout in load');
     expect(text).toContain('Result: clean, everything in scope was checked (exit 0)');
@@ -328,7 +328,7 @@ describe('ignored findings in the text report', () => {
     const text = renderText(
       runResult({
         baseline: {
-          file: 'chimpd-baseline.json',
+          file: 'bruise-baseline.json',
           present: true,
           entries: 1,
           stale: [],

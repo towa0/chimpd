@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { startProgress, type ProgressTerminal } from '../../src/progress/terminal.js';
-import { PLAIN } from '../../src/terminal/color.js';
+import { PLAIN } from '../../src/terminal/theme.js';
 import { recorded, RECORDED } from '../helpers/progress-events.js';
 
 const HIDE = '\u001b[?25l';

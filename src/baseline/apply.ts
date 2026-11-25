@@ -31,7 +31,7 @@ export interface IgnoreOutcome {
 }
 
 const KILLED = new Set(['Killed', 'Timeout']);
-const INVALID_IGNORE = 'chimpd-ignore without a reason is not honoured; write // chimpd-ignore: <reason>';
+const INVALID_IGNORE = 'bruise-ignore without a reason is not honoured; write // bruise-ignore: <reason>';
 
 class Sources {
   readonly #root: string;

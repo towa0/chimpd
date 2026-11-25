@@ -88,7 +88,7 @@ let markers = 0;
 export function addPairModule(repo: TempRepo): void {
   markers += 1;
   repo.write('src/pair.ts', PAIR_SOURCE);
-  repo.write('test/pair.test.ts', PAIR_TEST.replace('MARKER', `chimpd-once-${process.pid}-${Date.now()}-${markers}`));
+  repo.write('test/pair.test.ts', PAIR_TEST.replace('MARKER', `bruise-once-${process.pid}-${Date.now()}-${markers}`));
 }
 
 const CRASH_SOURCE = [
@@ -158,7 +158,7 @@ const SETUP_TEST = [
 export function addSetupFailureModule(repo: TempRepo): void {
   markers += 1;
   repo.write('src/setup.ts', SETUP_SOURCE);
-  repo.write('test/setup.test.ts', SETUP_TEST.replace('MARKER', `chimpd-setup-${process.pid}-${Date.now()}-${markers}`));
+  repo.write('test/setup.test.ts', SETUP_TEST.replace('MARKER', `bruise-setup-${process.pid}-${Date.now()}-${markers}`));
 }
 
 /** Adds a call whose test kills its own process when the call fails, as it does under any fault that rejects it. */

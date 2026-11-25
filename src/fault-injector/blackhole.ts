@@ -5,10 +5,10 @@ import { realNow, type AbortKind, type DeadlineMechanism } from '../core/index.j
 import { metadataFor, socketTimeoutFor, type CallMetadata } from './call-capture.js';
 
 export class BlackHoleReleased extends Error {
-  override readonly name = 'ChimpdBlackHoleReleased';
+  override readonly name = 'BruiseBlackHoleReleased';
 
   constructor() {
-    super('chimpd released a black-holed request');
+    super('bruise released a black-holed request');
   }
 }
 

@@ -63,7 +63,7 @@ function written(target: TempRepo): BaselineEntry[] {
   return parseBaseline(fs.readFileSync(path.join(target.dir, BASELINE_FILE), 'utf8'));
 }
 
-describe('chimpd baseline', () => {
+describe('bruise baseline', () => {
   it('runs with the given options and writes the current findings to the baseline at the repository root', async () => {
     const target = repo();
     const fault = faultFinding({ file: 'src/clients/ledger.ts', functionName: 'postLedgerEntry' });
@@ -73,7 +73,7 @@ describe('chimpd baseline', () => {
       { source: 'fault', file: 'src/clients/ledger.ts', function: 'postLedgerEntry', kind: 'hang-no-timeout', reason: null },
       MUTATION_ENTRY,
     ]);
-    expect(run.stdout).toContain('Wrote chimpd-baseline.json: 2 entries, 2 added, 0 kept, 0 pruned');
+    expect(run.stdout).toContain('Wrote bruise-baseline.json: 2 entries, 2 added, 0 kept, 0 pruned');
     expect(run.code).toBe(0);
   });
 
@@ -95,7 +95,7 @@ describe('chimpd baseline', () => {
     });
     const run = await baseline(['baseline', '--level', 'poke', '--cwd', target.dir], result);
     expect(written(target)).toEqual([MUTATION_ENTRY]);
-    expect(run.stdout).toContain('1 stale entry kept; chimpd baseline --prune removes it');
+    expect(run.stdout).toContain('1 stale entry kept; bruise baseline --prune removes it');
   });
 
   it('removes only the stale entries with --prune, never the ones it could not evaluate', async () => {
@@ -114,7 +114,7 @@ describe('chimpd baseline', () => {
 
   it('does not write findings that cannot be baselined, and says so', async () => {
     const target = repo();
-    const invalid = mutationFinding({ kind: 'invalid-ignore', mutation: null, severity: severityOf('invalid-ignore', 0), line: 4, message: 'chimpd-ignore without a reason' });
+    const invalid = mutationFinding({ kind: 'invalid-ignore', mutation: null, severity: severityOf('invalid-ignore', 0), line: 4, message: 'bruise-ignore without a reason' });
     const run = await baseline(['baseline', '--level', 'poke', '--cwd', target.dir], runResult({ findings: [invalid, survivor(null)] }));
     expect(written(target)).toEqual([]);
     expect(run.stdout).toContain('Not written: src/discount.ts:4 invalid-ignore, an ignore comment needs a reason, not a baseline entry');
@@ -143,7 +143,7 @@ describe('chimpd baseline', () => {
     target.write(BASELINE_FILE, '{ "version": 2, "entries": [] }\n');
     const run = await baseline(['baseline', '--level', 'poke', '--cwd', target.dir], runResult({ findings: [survivor('aaaaaaaaaaaaaaaa')] }));
     expect(run.code).toBe(2);
-    expect(run.stderr).toContain('chimpd: chimpd-baseline.json has version 2; this chimpd reads version 1');
+    expect(run.stderr).toContain('bruise: bruise-baseline.json has version 2; this version of bruise reads baseline version 1');
     expect(target.read(BASELINE_FILE)).toBe('{ "version": 2, "entries": [] }\n');
   });
 });
@@ -160,10 +160,10 @@ describe('baseline arguments', () => {
   });
 
   it.each([
-    [['run', '--level', 'poke', '--prune'], '--prune only applies to chimpd baseline'],
-    [['baseline', '--level', 'poke', '--plan'], '--plan only applies to chimpd run'],
-    [['baseline', '--level', 'poke', '--json'], '--json only applies to chimpd run'],
-    [['baseline', '--level', 'poke', '--strict'], '--strict only applies to chimpd run'],
+    [['run', '--level', 'poke', '--prune'], '--prune only applies to bruise baseline'],
+    [['baseline', '--level', 'poke', '--plan'], '--plan only applies to bruise run'],
+    [['baseline', '--level', 'poke', '--json'], '--json only applies to bruise run'],
+    [['baseline', '--level', 'poke', '--strict'], '--strict only applies to bruise run'],
     [['baseline'], '--level is required: poke, prod or shake'],
     [['scan'], "unknown command 'scan'; the commands are run and baseline"],
   ])('rejects %j', (argv, message) => {

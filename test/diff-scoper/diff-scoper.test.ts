@@ -43,7 +43,7 @@ const FILE = 'src/shapes.ts';
 
 // Windows needs a privilege to create file symlinks; the tests that need one skip without it.
 function canCreateFileSymlinks(): boolean {
-  const probe = fs.mkdtempSync(path.join(os.tmpdir(), 'chimpd-symlink-probe-'));
+  const probe = fs.mkdtempSync(path.join(os.tmpdir(), 'bruise-symlink-probe-'));
   try {
     fs.writeFileSync(path.join(probe, 'target'), '');
     fs.symlinkSync('target', path.join(probe, 'link'), 'file');

@@ -91,7 +91,7 @@ describe('the target Vite log', () => {
     async () => {
       const broken = createSampleApp();
       try {
-        broken.write('vitest.config.ts', "throw new Error('chimpd-broken-config');\n");
+        broken.write('vitest.config.ts', "throw new Error('bruise-broken-config');\n");
         const request = {
           targetRoot: broken.dir,
           configFile: path.join(broken.dir, 'vitest.config.ts'),
@@ -105,12 +105,12 @@ describe('the target Vite log', () => {
         const consoleCalls = (['log', 'info', 'warn', 'error'] as const).map((method) => vi.spyOn(console, method));
         const leaked = (): string =>
           written(stdout) + written(stderr) + consoleCalls.flatMap((spy) => spy.mock.calls.map((call) => call.join(' '))).join('');
-        await expect(runFaults(request)).rejects.toThrow('chimpd-broken-config');
+        await expect(runFaults(request)).rejects.toThrow('bruise-broken-config');
         expect(leaked()).not.toContain('failed to load config');
 
         let captured = '';
         await expect(runFaults({ ...request, onTargetOutput: (text: string) => (captured += text) })).rejects.toThrow(
-          'chimpd-broken-config',
+          'bruise-broken-config',
         );
         expect(captured).toContain('failed to load config');
         expect(leaked()).not.toContain('failed to load config');

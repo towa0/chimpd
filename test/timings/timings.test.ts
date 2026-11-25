@@ -36,13 +36,13 @@ describe('timings file', () => {
     for (let index = 0; index < 12; index += 1) recordTimings(target.dir, run({ at: `run ${index}` }));
     const runs = readTimings(target.dir);
     expect(runs.map((entry) => entry.at)).toEqual(Array.from({ length: 10 }, (_, index) => `run ${index + 2}`));
-    expect(fs.readFileSync(path.join(target.dir, '.chimpd/.gitignore'), 'utf8')).toBe('*\n');
-    expect(TIMINGS_FILE).toBe('.chimpd/timings.json');
+    expect(fs.readFileSync(path.join(target.dir, '.bruise/.gitignore'), 'utf8')).toBe('*\n');
+    expect(TIMINGS_FILE).toBe('.bruise/timings.json');
   });
 
   it('reads an unreadable file or one of another version as no runs', () => {
     const target = repo();
-    fs.mkdirSync(path.join(target.dir, '.chimpd'));
+    fs.mkdirSync(path.join(target.dir, '.bruise'));
     fs.writeFileSync(path.join(target.dir, TIMINGS_FILE), '{ not json');
     expect(readTimings(target.dir)).toEqual([]);
     fs.writeFileSync(path.join(target.dir, TIMINGS_FILE), JSON.stringify({ version: 99, runs: [run()] }));

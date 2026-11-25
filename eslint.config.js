@@ -1,7 +1,7 @@
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['dist/', 'node_modules/', 'test/compat/vitest-4/', '.chimpd/'] },
+  { ignores: ['dist/', 'node_modules/', 'test/compat/vitest-4/', '.bruise/'] },
   ...tseslint.configs.recommendedTypeChecked,
   {
     languageOptions: {

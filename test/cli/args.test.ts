@@ -43,7 +43,7 @@ describe('command line parsing', () => {
     expect(parseCliArgs(['run', '--level', 'poke', '--color'], CWD)).toMatchObject({ options: { color: true, banner: true } });
     expect(parseCliArgs(['run', '--level', 'poke', '--no-color', '--no-banner'], CWD)).toMatchObject({ options: { color: false, banner: false } });
     expect(error(['run', '--level', 'poke', '--color', '--no-color'])).toBe('--color and --no-color cannot be used together');
-    expect(error(['baseline', '--level', 'poke', '--no-banner'])).toBe('--no-banner only applies to chimpd run');
+    expect(error(['baseline', '--level', 'poke', '--no-banner'])).toBe('--no-banner only applies to bruise run');
   });
 
   it('keeps an absolute --cwd as given', () => {

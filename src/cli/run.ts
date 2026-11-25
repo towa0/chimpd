@@ -1,11 +1,12 @@
 import fs from 'node:fs';
 import { realNow } from '../core/index.js';
-import { EXIT_CLEAN, EXIT_INCONCLUSIVE, exitCodeOf, runChimpd, type RunOptions, type RunResult } from '../orchestrator/index.js';
+import { EXIT_CLEAN, EXIT_INCONCLUSIVE, exitCodeOf, runBruise, type RunOptions, type RunResult } from '../orchestrator/index.js';
 import { exitCodeOfPlan, planRun, type PlanOptions, type RunPlan } from '../plan/index.js';
 import { startProgress, type ProgressDisplay } from '../progress/terminal.js';
 import { renderJson, renderPlanJson, renderPlanText, renderText } from '../reporter/index.js';
-import { renderBanner, showBanner } from '../terminal/banner.js';
-import { colorEnabled, paletteFor, type Env } from '../terminal/color.js';
+import { colorEnabled, type Env } from '../terminal/color.js';
+import { renderHeader, showHeader } from '../terminal/header.js';
+import { themeFor } from '../terminal/theme.js';
 import { renderFancyText } from '../terminal/report.js';
 import { parseCliArgs, USAGE } from './args.js';
 import { runBaseline } from './baseline.js';
@@ -50,7 +51,7 @@ function progressOn(io: CliIo, terminal: CliTerminal, color: boolean | undefined
       setInterval: (callback, ms) => setInterval(callback, ms).unref(),
       clearInterval: (handle) => clearInterval(handle as NodeJS.Timeout),
     },
-    paletteFor(colorEnabled({ flag: color, env: terminal.env, isTTY: true })),
+    themeFor(colorEnabled({ flag: color, env: terminal.env, isTTY: true })),
   );
 }
 
@@ -66,7 +67,7 @@ export function packageVersion(): string {
   return manifest.version ?? 'unknown';
 }
 
-const DEFAULT_DEPS: CliDeps = { cwd: process.cwd(), run: runChimpd, plan: planRun, version: packageVersion };
+const DEFAULT_DEPS: CliDeps = { cwd: process.cwd(), run: runBruise, plan: planRun, version: packageVersion };
 
 /** Runs one command line and returns its exit code; it never throws and never exits the process. */
 export async function runCli(argv: readonly string[], io: CliIo, deps: Partial<CliDeps> = {}): Promise<number> {
@@ -81,7 +82,7 @@ export async function runCli(argv: readonly string[], io: CliIo, deps: Partial<C
     return EXIT_CLEAN;
   }
   if (parsed.kind === 'error') {
-    io.stderr(`chimpd: ${parsed.message}\n\n${USAGE}\n`);
+    io.stderr(`bruise: ${parsed.message}\n\n${USAGE}\n`);
     return EXIT_INCONCLUSIVE;
   }
 
@@ -89,8 +90,8 @@ export async function runCli(argv: readonly string[], io: CliIo, deps: Partial<C
 
   const { options } = parsed;
   const terminal = io.terminal ?? PIPED;
-  if (showBanner({ stderrIsTTY: terminal.stderrIsTTY, json: options.json, banner: options.banner, env: terminal.env })) {
-    io.stderr(renderBanner(version(), paletteFor(colorEnabled({ flag: options.color, env: terminal.env, isTTY: true }))));
+  if (showHeader({ stderrIsTTY: terminal.stderrIsTTY, json: options.json, banner: options.banner, env: terminal.env })) {
+    io.stderr(renderHeader(version(), themeFor(colorEnabled({ flag: options.color, env: terminal.env, isTTY: true }))));
   }
   if (options.plan) {
     let planned: RunPlan;
@@ -102,7 +103,7 @@ export async function runCli(argv: readonly string[], io: CliIo, deps: Partial<C
         ...(options.seed === undefined ? {} : { seed: options.seed }),
       });
     } catch (error) {
-      io.stderr(`chimpd: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`);
+      io.stderr(`bruise: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`);
       return EXIT_INCONCLUSIVE;
     }
     io.stdout(options.json ? renderPlanJson(planned) : renderPlanText(planned));
@@ -123,18 +124,18 @@ export async function runCli(argv: readonly string[], io: CliIo, deps: Partial<C
     });
   } catch (error) {
     progress?.stop();
-    io.stderr(`chimpd: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`);
+    io.stderr(`bruise: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`);
     return EXIT_INCONCLUSIVE;
   }
   progress?.stop();
   const exit = { strict: options.strict };
-  const palette = paletteFor(colorEnabled({ flag: options.color, env: terminal.env, isTTY: terminal.stdoutIsTTY }));
-  const fancy = terminal.stdoutIsTTY || palette.enabled;
+  const theme = themeFor(colorEnabled({ flag: options.color, env: terminal.env, isTTY: terminal.stdoutIsTTY }));
+  const fancy = terminal.stdoutIsTTY || theme.enabled;
   io.stdout(
     options.json
       ? renderJson(result, exit)
       : fancy
-        ? renderFancyText(result, exit, palette, terminal.stdoutColumns())
+        ? renderFancyText(result, exit, theme, terminal.stdoutColumns())
         : renderText(result, exit),
   );
   return exitCodeOf(result, exit);

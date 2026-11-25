@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ensureWorkDir, WORK_DIR_NAME } from '../core/index.js';
 
-/** Where measured run timings are kept, from the target root; inside chimpd's git-ignored work directory. */
+/** Where measured run timings are kept, from the target root; inside bruise's git-ignored work directory. */
 export const TIMINGS_FILE = `${WORK_DIR_NAME}/timings.json`;
 export const TIMINGS_VERSION = 1;
 const KEPT_RUNS = 10;

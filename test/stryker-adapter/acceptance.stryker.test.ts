@@ -101,7 +101,7 @@ describe('stryker adapter on the sample app', () => {
       ]);
 
       expect(app.git('status', '--porcelain')).toBe('');
-      expect(fs.readdirSync(path.join(app.dir, '.chimpd')).sort()).toEqual(['.gitignore']);
+      expect(fs.readdirSync(path.join(app.dir, '.bruise')).sort()).toEqual(['.gitignore']);
       expect(fs.existsSync(path.join(app.dir, 'reports'))).toBe(false);
       expect(fs.existsSync(path.join(app.dir, '.stryker-tmp'))).toBe(false);
       expect(fs.existsSync(path.join(repoNodeModules, 'vitest/package.json'))).toBe(true);
@@ -178,12 +178,12 @@ describe('stryker adapter on the sample app', () => {
       for (const leftover of ['reports', 'target-tmp', '.stryker-tmp', 'stryker.log']) {
         expect(fs.existsSync(path.join(app.dir, leftover)), leftover).toBe(false);
       }
-      expect(fs.readdirSync(path.join(app.dir, '.chimpd')).sort()).toEqual(['.gitignore']);
+      expect(fs.readdirSync(path.join(app.dir, '.bruise')).sort()).toEqual(['.gitignore']);
       expect(app.git('status', '--porcelain')).toBe('');
 
       expect(result.checker).toMatchObject({
         enabled: false,
-        reason: "type checker disabled: target does not type-check under chimpd's TypeScript 6.0.3",
+        reason: "type checker disabled: target does not type-check under bruise's TypeScript 6.0.3",
       });
 
       const weird = result.mutants.filter((mutant) => mutant.file === 'src/[id] (copy) {x}.ts');

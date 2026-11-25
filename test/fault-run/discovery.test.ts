@@ -92,7 +92,7 @@ describe('call-site discovery on the sample app', () => {
   });
 
   it('leaves nothing behind in the target', async () => {
-    expect(fs.readdirSync(path.join(app.dir, '.chimpd'))).toEqual(['.gitignore']);
+    expect(fs.readdirSync(path.join(app.dir, '.bruise'))).toEqual(['.gitignore']);
     expect(await scopeDiff({ repoRoot: app.dir, mode: 'changed-lines' })).toEqual(scope);
     expect(scope.dirty).toBe(false);
   });

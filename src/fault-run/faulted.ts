@@ -51,7 +51,7 @@ export interface SiteRun {
 /** Room for a released request to settle before Vitest's own timeout would fail the test instead. */
 export const TEST_TIMEOUT_MARGIN_MS = 2000;
 
-const SENTINEL_NAME = 'ChimpdBlackHoleReleased';
+const SENTINEL_NAME = 'BruiseBlackHoleReleased';
 const MAX_CAUSE_DEPTH = 5;
 
 // Errors cross the worker boundary as plain objects, so the sentinel is recognised by name.
@@ -68,7 +68,7 @@ function isSerializedSentinel(error: unknown): boolean {
 
 function raiseTestTimeout(deadlineMs: number): Vite.Plugin {
   return {
-    name: 'chimpd:test-timeout',
+    name: 'bruise:test-timeout',
     configureVitest({ project }) {
       project.config.testTimeout = Math.max(project.config.testTimeout, deadlineMs + TEST_TIMEOUT_MARGIN_MS);
     },

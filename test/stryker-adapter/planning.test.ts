@@ -100,7 +100,7 @@ describe('glob escaping', () => {
 
 describe('target Stryker config', () => {
   it('is found under every name Stryker would load', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'chimpd-config-'));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bruise-config-'));
     try {
       expect(findTargetConfig(dir)).toBeNull();
       for (const name of ['.stryker.conf.cjs', 'stryker.config.mjs', 'stryker.conf.json']) {
@@ -116,16 +116,16 @@ describe('target Stryker config', () => {
 describe('stryker options', () => {
   const [batch] = planBatches([range('src/discount.ts', 2, 2)], 1);
   if (batch === undefined) throw new Error('expected one batch');
-  const input = { batch, ignoreStatic: true, checkerEnabled: true, pluginPath: '/plugin.js', configFile: '/target/.chimpd/stryker.config.json' };
+  const input = { batch, ignoreStatic: true, checkerEnabled: true, pluginPath: '/plugin.js', configFile: '/target/.bruise/stryker.config.json' };
 
-  it('keeps every Stryker artifact inside .chimpd and writes no reports', () => {
+  it('keeps every Stryker artifact inside .bruise and writes no reports', () => {
     const options = buildStrykerOptions({ ...input, preset: PRESETS[1] });
     expect(options).toMatchObject({
-      configFile: '/target/.chimpd/stryker.config.json',
-      tempDirName: '.chimpd/stryker-tmp',
+      configFile: '/target/.bruise/stryker.config.json',
+      tempDirName: '.bruise/stryker-tmp',
       cleanTempDir: 'always',
-      ignorePatterns: ['.chimpd'],
-      reporters: ['chimpd-stream'],
+      ignorePatterns: ['.bruise'],
+      reporters: ['bruise-stream'],
       incremental: false,
       logLevel: 'off',
       fileLogLevel: 'off',
@@ -148,7 +148,7 @@ describe('stryker options', () => {
 describe('type checker decision', () => {
   const fixture = path.join(repoRoot, 'fixtures/sample-app');
 
-  it('loads the typescript copy that resolves from the checker, which is chimpd 6.0.3 here', () => {
+  it('loads the typescript copy that resolves from the checker, which is bruise 6.0.3 here', () => {
     expect(resolveCheckerTypeScript()).toEqual({ version: '6.0.3', path: path.join(repoNodeModules, 'typescript') });
     expect(decideChecker(fixture)).toMatchObject({ enabled: true, reason: null, typescriptVersion: '6.0.3' });
   });
@@ -156,7 +156,7 @@ describe('type checker decision', () => {
   it('is disabled, not fatal, when that copy is TypeScript 7', () => {
     expect(decideChecker(fixture, { version: '7.0.2', path: '/somewhere/typescript' })).toEqual({
       enabled: false,
-      reason: "type checker disabled: chimpd's own TypeScript copy, which the checker loads, is 7.0.2; the checker needs TypeScript below 7",
+      reason: "type checker disabled: bruise's own TypeScript copy, which the checker loads, is 7.0.2; the checker needs TypeScript below 7",
       typescriptVersion: '7.0.2',
       typescriptPath: '/somewhere/typescript',
     });

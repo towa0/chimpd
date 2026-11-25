@@ -1,5 +1,5 @@
 {
-  "name": "chimpd-compat-vitest-4",
+  "name": "bruise-compat-vitest-4",
   "private": true,
   "type": "module",
   "devDependencies": {

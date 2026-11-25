@@ -1,5 +1,5 @@
 /// <reference types="vitest/globals" />
 
-test('chimpd setup ran before the fixture setup file', () => {
-  expect((globalThis as Record<PropertyKey, unknown>).fixtureSetupSawChimpd).toBe(true);
+test('bruise setup ran before the fixture setup file', () => {
+  expect((globalThis as Record<PropertyKey, unknown>).fixtureSetupSawBruise).toBe(true);
 });

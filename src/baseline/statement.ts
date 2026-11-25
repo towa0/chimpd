@@ -16,7 +16,7 @@ export interface IgnoreDirective {
 }
 
 const HASH_LENGTH = 16;
-const DIRECTIVE = /^\s*\/\/\s*chimpd-ignore(?![\w-])(.*)$/;
+const DIRECTIVE = /^\s*\/\/\s*bruise-ignore(?![\w-])(.*)$/;
 
 function scriptKind(fileName: string): ts.ScriptKind {
   if (/\.[cm]?tsx$/.test(fileName)) return ts.ScriptKind.TSX;
@@ -67,7 +67,7 @@ export class SourceStatements {
     return found;
   }
 
-  /** The chimpd-ignore comments of the file, valid or not. */
+  /** The bruise-ignore comments of the file, valid or not. */
   directives(): IgnoreDirective[] {
     const found: IgnoreDirective[] = [];
     this.#lines.forEach((text, index) => {

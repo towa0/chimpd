@@ -202,7 +202,7 @@ function baselineSection(result: RunResult): string[] {
   if (baseline === null) return [];
   const lines: string[] = [];
   if (baseline.stale.length > 0) {
-    lines.push(`Stale baseline entries (${baseline.stale.length}), matching nothing in scope any more; chimpd baseline --prune removes them:`);
+    lines.push(`Stale baseline entries (${baseline.stale.length}), matching nothing in scope any more; bruise baseline --prune removes them:`);
     lines.push(...baseline.stale.map(entryLine));
   }
   if (baseline.notEvaluated.length > 0) {

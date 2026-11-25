@@ -1,4 +1,6 @@
-# chimpd
+# bruise
+
+Find the soft spots in your tests.
 
 Checks the code a branch changed in a TypeScript project tested with Vitest. It answers two questions, limited to what the diff touched:
 
@@ -17,17 +19,17 @@ It runs within a fixed time budget and reports only what the diff touched.
 ## Install
 
 ```sh
-npm install --save-dev chimpd
+npm install --save-dev bruise
 ```
 
 ## Usage
 
 ```sh
-npx chimpd run --level poke
-npx chimpd run --level prod --base origin/develop --json > report.json
-npx chimpd run --level shake --strict --cwd packages/api
-npx chimpd baseline --level prod
-npx chimpd baseline --level prod --prune
+npx bruise run --level poke
+npx bruise run --level prod --base origin/develop --json > report.json
+npx bruise run --level shake --strict --cwd packages/api
+npx bruise baseline --level prod
+npx bruise baseline --level prod --prune
 ```
 
 | Option | Meaning |
@@ -39,10 +41,10 @@ npx chimpd baseline --level prod --prune
 | `--json` | `run` only. Print the JSON report instead of text. |
 | `--strict` | `run` only. Exit 2 whenever anything in scope was not checked. |
 | `--verbose` | Pass on what the project's own tests print. It goes to stderr, so `--json` output stays clean. Without it, that output is discarded. |
-| `--seed <n>` | An integer from 0 to 2147483647 that decides ties when a cap or the budget forces a choice; see [Seed](#seed). Without it, chimpd picks one and prints it in the report. |
+| `--seed <n>` | An integer from 0 to 2147483647 that decides ties when a cap or the budget forces a choice; see [Seed](#seed). Without it, bruise picks one and prints it in the report. |
 | `--cwd <dir>` | The project to check. Default the current directory. |
 | `--color`, `--no-color` | `run` only. Force colour on, also when stdout is not a terminal, or turn it off; see [Terminal output](#terminal-output). |
-| `--no-banner` | `run` only. Leave out the banner shown on an interactive terminal. |
+| `--no-banner` | `run` only. Leave out the header line shown on an interactive terminal. |
 
 Uncommitted and untracked files count as part of the branch. When only test files changed, the mutation phase mutates the source files those tests import, and only mutants that a changed test runs are reported. In that case the fault phase does not run.
 
@@ -51,8 +53,8 @@ Tooling and config files are kept out of scope and listed in the report as not c
 ## Plan
 
 ```sh
-npx chimpd run --plan --level prod
-npx chimpd run --plan --level shake --seed 7 --json > plan.json
+npx bruise run --plan --level prod
+npx bruise run --plan --level shake --seed 7 --json > plan.json
 ```
 
 `--plan` takes the same flags as a run, runs no mutant, no test and no fault, and writes nothing to the working tree. It prints:
@@ -62,9 +64,9 @@ npx chimpd run --plan --level shake --seed 7 --json > plan.json
 - the mutation batches in the order a run with the same seed would run them;
 - the changed outgoing calls found in the source. A run finds call sites by running the tests, so calls made through a wrapper or a client library, in the changed file or another, are found only at run time and are missing here;
 - the preset, its caps and the budget split;
-- a time estimate, labelled as an estimate, with how it was derived. Every run records where its time went in `.chimpd/timings.json`, inside chimpd's git-ignored work directory, keeping the last 10 runs: Stryker's start and dry run per batch, the time per mutant, the call-site discovery run and the time per faulted run. The plan uses the most recent measurement of each and says which costs were measured. Without one, it assumes 10 s of Stryker start and dry run per batch, 0.5 s per mutant, a 10 s call-site discovery run, and, per call site up to the cap, the 2 s fault deadline plus 1 s per test, and labels the estimate "uncalibrated: first runs on a project often take several times longer". When a file's mutant count is unavailable, the plan uses the preset's guess of mutants per scoped line for that file instead. Each part is capped at its share of the budget.
+- a time estimate, labelled as an estimate, with how it was derived. Every run records where its time went in `.bruise/timings.json`, inside bruise's git-ignored work directory, keeping the last 10 runs: Stryker's start and dry run per batch, the time per mutant, the call-site discovery run and the time per faulted run. The plan uses the most recent measurement of each and says which costs were measured. Without one, it assumes 10 s of Stryker start and dry run per batch, 0.5 s per mutant, a 10 s call-site discovery run, and, per call site up to the cap, the 2 s fault deadline plus 1 s per test, and labels the estimate "uncalibrated: first runs on a project often take several times longer". When a file's mutant count is unavailable, the plan uses the preset's guess of mutants per scoped line for that file instead. Each part is capped at its share of the budget.
 
-The plan also says when a run would stop with a tool error, for example when no Vitest config is found or `chimpd-baseline.json` cannot be read. The installed Vitest version is not checked, because that means loading it.
+The plan also says when a run would stop with a tool error, for example when no Vitest config is found or `bruise-baseline.json` cannot be read. The installed Vitest version is not checked, because that means loading it.
 
 The exit code is 0 whenever the plan could be computed, and 2 when it could not: outside a git repository, a base ref that does not resolve, bad arguments. `--json` prints `"report": "plan"` with its own `"schemaVersion": 1`, versioned apart from the run report under the same rules: `status`, `exitCode`, `error`, `level`, `preset`, `seed`, `git`, `scope`, `vitestConfig`, `runWouldFail`, `mutation`, `faults`, `budget` and `estimate`, which carries `"isEstimate": true`, `calibrated` (whether every cost it used was measured on an earlier run) and its `derivation`.
 
@@ -88,14 +90,14 @@ Each mutation batch runs Stryker with a concurrency of the smallest of the batch
 
 ## Seed
 
-When a cap or the budget forces chimpd to choose, the seed decides between items of equal rank and nothing else:
+When a cap or the budget forces bruise to choose, the seed decides between items of equal rank and nothing else:
 
 - Call sites over the preset cap: sites are ranked by severity prior; among sites of equal prior, the seed decides which are faulted and which are skipped as over the cap.
 - Tests per call site: the cheapest tests by their unfaulted duration come first; the seed only orders tests of equal duration.
 - Files in a test-only run over the file cap: closest to a changed test first, then the most sensitive; the seed orders files of equal distance and prior.
 - Mutation batches: files are ranked by severity prior; the seed orders files of equal prior, which decides which files a short budget leaves untested.
 
-A more sensitive item is never dropped in favour of a less sensitive one. The same seed, diff and config give the same selection and order. Each choice depends on the seed and the items' identities only, not on the order discovery found them in. The order of mutants inside one Stryker batch is Stryker's own and is not seeded. Without `--seed`, chimpd picks a seed at random and prints it in the report, so a run can be repeated with `--seed`.
+A more sensitive item is never dropped in favour of a less sensitive one. The same seed, diff and config give the same selection and order. Each choice depends on the seed and the items' identities only, not on the order discovery found them in. The order of mutants inside one Stryker batch is Stryker's own and is not seeded. Without `--seed`, bruise picks a seed at random and prints it in the report, so a run can be repeated with `--seed`.
 
 ## Baseline and ignores
 
@@ -103,7 +105,7 @@ Some findings are accepted on purpose: an equivalent mutant that no test can kil
 
 ### Baseline file
 
-`chimpd baseline --level <name>` runs the same check as `chimpd run` with the same flags, prints its report, and writes the current findings to `chimpd-baseline.json` at the repository root. Commit that file; it is not under `.chimpd/`. When the run is `inconclusive` or `error`, nothing is written and the command exits 2.
+`bruise baseline --level <name>` runs the same check as `bruise run` with the same flags, prints its report, and writes the current findings to `bruise-baseline.json` at the repository root. Commit that file; it is not under `.bruise/`. When the run is `inconclusive` or `error`, nothing is written and the command exits 2.
 
 ```json
 {
@@ -124,12 +126,12 @@ Some findings are accepted on purpose: an equivalent mutant that no test can kil
 
 - A mutation entry names the file from the repository root, the mutator, the replacement, and a hash of the innermost statement around the mutant. Before hashing, the statement is printed without comments, whitespace and trailing commas, so edits elsewhere in the file, moved lines and reformatting do not invalidate the entry. A change to the statement itself does.
 - A fault entry names the file, the function the call is made from (`null` for an anonymous function) and the finding kind.
-- `reason` is optional; add one by hand. Running `chimpd baseline` again keeps every entry and its reason, and adds the new findings.
-- A file that is not valid JSON, has a version other than 1, or holds an entry chimpd does not understand, such as an unknown field, is a tool error (exit 2) for `run` and for `baseline`. It is never skipped.
+- `reason` is optional; add one by hand. Running `bruise baseline` again keeps every entry and its reason, and adds the new findings.
+- A file that is not valid JSON, has a version other than 1, or holds an entry bruise does not understand, such as an unknown field, is a tool error (exit 2) for `run` and for `baseline`. It is never skipped.
 
 Entries that matched nothing are reported, never as an error:
 
-- Stale: the entry no longer matches anything in scope. A mutation entry is stale when its file is gone, when its statement no longer exists in a file in scope, or when its mutant was killed. A fault entry is stale when its function's call was faulted again and got another verdict. `chimpd baseline --prune` removes stale entries, and nothing else.
+- Stale: the entry no longer matches anything in scope. A mutation entry is stale when its file is gone, when its statement no longer exists in a file in scope, or when its mutant was killed. A fault entry is stale when its function's call was faulted again and got another verdict. `bruise baseline --prune` removes stale entries, and nothing else.
 - Not evaluated: the entry's statement is in scope, but its mutant was not tested or not generated at this level, so the run cannot tell. These are listed and kept.
 
 An entry for code outside the scope is left alone.
@@ -137,11 +139,11 @@ An entry for code outside the scope is left alone.
 ### Inline ignores
 
 ```ts
-// chimpd-ignore: the cache key is never empty here, so this branch is equivalent
+// bruise-ignore: the cache key is never empty here, so this branch is equivalent
 if (key.length === 0) {
 ```
 
-A `// chimpd-ignore: <reason>` comment on the line directly above a statement sets aside the findings inside that statement, nested statements included, for both mutants and fault call sites. The reason is required. A comment without one, `// chimpd-ignore` or `// chimpd-ignore:` with nothing after it, is not honoured: when the comment, or the line under it, is in scope, it is reported as an `invalid-ignore` finding at the comment, which counts toward the exit code like any other finding. When an inline comment and a baseline entry both match, the finding counts as ignored inline.
+A `// bruise-ignore: <reason>` comment on the line directly above a statement sets aside the findings inside that statement, nested statements included, for both mutants and fault call sites. The reason is required. A comment without one, `// bruise-ignore` or `// bruise-ignore:` with nothing after it, is not honoured: when the comment, or the line under it, is in scope, it is reported as an `invalid-ignore` finding at the comment, which counts toward the exit code like any other finding. When an inline comment and a baseline entry both match, the finding counts as ignored inline.
 
 ## Verdicts
 
@@ -159,7 +161,7 @@ Mutation phase:
 
 Before any mutant runs, Stryker runs the tests related to the changed files with no mutant active. If any of them fails, no mutant is judged: the mutation phase is `inconclusive` with the reason "the target's own tests fail before any mutant runs", and its files are listed as not mutated.
 
-Stryker's Vitest runner reports no coverage at all when no test executes any mutant of a batch, and Stryker then runs every test against each mutant, which would report them as survivors. chimpd reports those mutants as `no-coverage` instead, unless one of the batch's mutants was killed, which would mean coverage collection itself failed.
+Stryker's Vitest runner reports no coverage at all when no test executes any mutant of a batch, and Stryker then runs every test against each mutant, which would report them as survivors. bruise reports those mutants as `no-coverage` instead, unless one of the batch's mutants was killed, which would mean coverage collection itself failed.
 
 ## Fault kinds
 
@@ -176,7 +178,7 @@ Black hole, for each call site:
 | handled | The call's timeout fired and the test passed. Counted as checked. |
 | inconclusive | No reliable verdict; listed with the reason. |
 
-HTTP 500: each call to the site gets a `500 Internal Server Error` response with the short body `Internal Server Error`. chimpd watches the response the code receives: for `fetch`, reads of `ok`, `status` and `statusText`, and of the body through `json`, `text`, `arrayBuffer`, `blob`, `formData`, `bytes` or `body`; for `http`, reads of `statusCode` and `statusMessage`, and of the body through a `data` or `readable` listener, `pipe` or async iteration. Discarding the body with `resume()` does not count as reading it.
+HTTP 500: each call to the site gets a `500 Internal Server Error` response with the short body `Internal Server Error`. bruise watches the response the code receives: for `fetch`, reads of `ok`, `status` and `statusText`, and of the body through `json`, `text`, `arrayBuffer`, `blob`, `formData`, `bytes` or `body`; for `http`, reads of `statusCode` and `statusMessage`, and of the body through a `data` or `readable` listener, `pipe` or async iteration. Discarding the body with `resume()` does not count as reading it.
 
 | Result | Meaning |
 | --- | --- |
@@ -185,7 +187,7 @@ HTTP 500: each call to the site gets a `500 Internal Server Error` response with
 | handled | The code checked the status, or did not use the response at all, and the test passed. |
 | inconclusive | No call got the response, or the response never reached the code; listed with the reason. |
 
-Malformed JSON: each call to the site gets a `200` response with `content-type: application/json` and the body `{"chimpd-malformed-json":`, which no JSON parser accepts. chimpd counts a parse when `JSON.parse` is handed exactly that body, which covers `response.json()`, `JSON.parse(await response.text())` and an `http` body parsed by hand.
+Malformed JSON: each call to the site gets a `200` response with `content-type: application/json` and the body `{"bruise-malformed-json":`, which no JSON parser accepts. bruise counts a parse when `JSON.parse` is handed exactly that body, which covers `response.json()`, `JSON.parse(await response.text())` and an `http` body parsed by hand.
 
 | Result | Meaning |
 | --- | --- |
@@ -211,7 +213,7 @@ Several changed functions that share one wrapper share one site. It counts once 
 
 When the changed code reaches no outgoing call at all in the tests related to it, the fault phase says so, under Coverage and as its reason, rather than reporting 0 call sites silently.
 
-Call sites are found by running the tests, so a call no test makes would leave no trace. To close that gap, chimpd also reads the changed code for direct calls to `fetch` (also as `globalThis.fetch`), `http.request`, `http.get`, `https.request` and `https.get`, under any import style. Each one the tests never reached is listed as not checked: "changed call to fetch at src/a.ts:12 is not reached by any test". Calls through a wrapper or a client library such as axios are not read from the source, whether the wrapper is in the changed file or another; they are found only at run time, and faulted when a test makes them through changed code.
+Call sites are found by running the tests, so a call no test makes would leave no trace. To close that gap, bruise also reads the changed code for direct calls to `fetch` (also as `globalThis.fetch`), `http.request`, `http.get`, `https.request` and `https.get`, under any import style. Each one the tests never reached is listed as not checked: "changed call to fetch at src/a.ts:12 is not reached by any test". Calls through a wrapper or a client library such as axios are not read from the source, whether the wrapper is in the changed file or another; they are found only at run time, and faulted when a test makes them through changed code.
 
 ## Output
 
@@ -227,20 +229,46 @@ The text report shows the diff scope, a coverage summary, the findings most seve
 - `phases`: one entry per phase, with its status, reason, the full error as `detail` when it failed, budget and time spent, and `timings`, where that time went: for mutation, Stryker's start and dry run (`strykerStartMs`, with the dry run's own test time as `dryRunNetMs`), and the time after it over the mutants run (`mutantsMs`, `mutantsRun`, `msPerMutant`); for faults, the discovery run (`discoveryMs`) and the faulted runs that finished (`faultRuns`, `faultRunsMs`, `msPerFaultRun`). The text report shows the same breakdown under Phases.
 - `findings`: every finding that counts, with its severity and its mutation or fault detail; a mutation finding carries the `statement` hash a baseline entry would use
 - `ignored`: every finding the baseline or an inline comment set aside, with `ignoredBy` (`baseline` or `inline`) and `ignoreReason`
-- `baseline`: whether `chimpd-baseline.json` exists, its number of entries, and its `stale` and `notEvaluated` entries; `null` when the run stopped before reading it
+- `baseline`: whether `bruise-baseline.json` exists, its number of entries, and its `stale` and `notEvaluated` entries; `null` when the run stopped before reading it
 - `coverage`: `checked` counts, plus `invalid`, `invalidExcluded` (`true` when at least one valid mutant ran, so the invalid mutants are listed but do not make the run `partial`), `skipped`, `inconclusive` and `conflicts`, each item with its reason, and `notTested`: per file, the mutants that were generated but not tested before the budget ran out (`mutants` is `null` for a file whose mutants were never planned); each of those mutants is also in `skipped`
 
 Every duration is in whole milliseconds. Nothing in scope is dropped silently: whatever was not checked appears under `coverage` and in the text report.
 
 ## Terminal output
 
-When stdout or stderr is not a terminal, as in CI logs, pipes and redirects, chimpd writes exactly the plain report above and nothing else. On a terminal it adds, in ASCII only:
+When stdout or stderr is not a terminal, as in CI logs, pipes and redirects, bruise writes exactly the plain report above and nothing else. On a terminal it adds, in ASCII only:
 
-- a banner on stderr: a small banana with the name and version. It is left out with `--json`, `--no-banner`, when `CI` is set and when `NO_COLOR` is set.
+- a header line on stderr: `bruise 0.1.0  find the soft spots in your tests`, with the name and version in bold brand colour and the tagline dim. It is left out with `--json`, `--no-banner` and when `CI` is set; under `NO_COLOR` it is the same line without colour.
 - live progress on stderr while a run works, redrawn in place on one line: a header per phase with its budget, a spinner, a bar of mutants tested out of the total or faulted runs out of the planned ones, the time spent against the phase budget, and the file being worked on. Before the first result it says what it waits for, such as Stryker's start and dry run. On a narrow terminal it drops the file, then the bar, then the time, so the line never wraps; it redraws on resize. The cursor is hidden while it runs and shown again when the run ends, fails, is interrupted with Ctrl-C or is terminated. `--verbose` turns the progress off, because the project's own test output would land in the middle of the line.
-- in the report on stdout: bold section headers; each finding on a line of its own that starts with `path:line:col`, which many terminals make clickable, with its reason indented under it; severity in colour, high red, medium yellow, low dim; and, at the end, a summary box with mutants killed, survived, invalid (followed by `excluded` when they are not a gap) and not tested, the handled, finding and inconclusive results of each fault kind, and the time spent against the budget, followed by the Result line with its exit code. The box is left out on a terminal too narrow for it.
+- in the report on stdout: section titles in bold brand colour; each finding on a line of its own that starts with `path:line:col`, which many terminals make clickable, with its reason indented under it; the severity label coloured by level; and, at the end, a summary box with mutants killed, survived, invalid (followed by `(excluded)` when they are not a gap) and not tested, the handled, finding and inconclusive results of each fault kind, and the time spent against the budget, followed by the Result line with its exit code. The box is left out on a terminal too narrow for it.
 
 Colour: `--color` colours the report even when stdout is not a terminal, and then uses the terminal layout; `--no-color` turns colour off, and the two cannot be combined. Without either flag, `FORCE_COLOR` (any value but `0` or `false`) forces colour, `NO_COLOR` or `TERM=dumb` turns it off, and otherwise only a terminal gets colour. The terminal layout without colour, under `NO_COLOR` for example, is the same text. `--json` output never changes.
+
+Colour uses the 16 basic ANSI colours only, so the terminal's own theme decides the exact shade and keeps contrast on dark and light backgrounds. Colour never carries meaning alone: severity labels such as `[medium 55]`, statuses and counts are always in the text.
+
+| Role | Colour | Used for |
+| --- | --- | --- |
+| brand | magenta; bold for titles | the name in the header, section titles, survived mutants, finding counts, a Result line with findings |
+| severity high | bold magenta | `[high ...]`, score 70 or more |
+| severity medium | blue | `[medium ...]`, score 50 to 69 |
+| severity low | yellow | `[low ...]`, score below 50 |
+| good | green | killed, handled, completed, a clean Result line |
+| warning | yellow | partial, not tested, excluded, inconclusive, budget-exhausted |
+| error | red | exit 2, a tool error, a failed phase |
+| secondary | dim | the tagline, finding reasons, the summary box border, the progress bar track |
+| progress | magenta | the spinner and the progress bar fill |
+
+The Result line is bold in its outcome's colour, with "coverage complete" in green and "coverage partial" in yellow. Palette for the website and other material, for reference only; the CLI itself uses the ANSI colours above:
+
+| Name | Hex |
+| --- | --- |
+| brand violet | `#8B5CF6` |
+| deep plum | `#6D28D9` |
+| bruise blue | `#60A5FA` |
+| healing green | `#84CC16` |
+| healing yellow | `#FACC15` |
+| error red | `#F87171` |
+| dim grey | `#9CA3AF` |
 
 ## Run status
 
@@ -266,7 +294,7 @@ Gaps that make a run partial include call sites over the preset cap, a budget th
 ## Known limits
 
 - Vitest and TypeScript only.
-- Under the `happy-dom` environment the fault phase is inconclusive: happy-dom replaces `fetch` and `Request` with its own, which chimpd cannot fault yet. Custom environments that replace them are reported as a patch.
+- Under the `happy-dom` environment the fault phase is inconclusive: happy-dom replaces `fetch` and `Request` with its own, which bruise cannot fault yet. Custom environments that replace them are reported as a patch.
 - Under `malformed-json`, a parse is seen through the global `JSON.parse`. A parser that does not go through it, such as a streaming JSON library, leaves the site inconclusive.
 - Under `http-500`, a status read counts once it happens; a body read before it makes the finding even when the status is checked later. A body read with `read()` alone, without a `readable` listener, is not seen. What the code does with the response after its test body ended is not seen.
 - A test file that replaces `fetch` or the `http` entry points itself, for example with a mock library, prevents faulting for the calls made under it. It is reported as a conflict.
@@ -276,7 +304,7 @@ Gaps that make a run partial include call sites over the preset cap, a budget th
 - A call reached through a wrapper is in scope only when a frame of changed code is on its stack trace, awaiting callers included. A changed function that only schedules the call, for example from a timer or an event handler that runs later, leaves no frame there, so the call is not faulted.
 - The plan's static scan finds direct calls only. A changed call to a wrapper does not show up in the plan, and a changed call to a wrapper that no test reaches is not listed as not checked.
 - The seed orders mutation batches but not the mutants inside a batch, whose order is Stryker's.
-- The Stryker type checker uses chimpd's own TypeScript 6, also for projects on TypeScript 7. The checker's version check tests that copy, not the project's. A project that does not type-check under it is mutated without the checker.
+- The Stryker type checker uses bruise's own TypeScript 6, also for projects on TypeScript 7. The checker's version check tests that copy, not the project's. A project that does not type-check under it is mutated without the checker.
 - A mutant on a type guard, such as `typeof value !== 'string'`, usually fails to compile once mutated, so a change made only of such lines can end with no mutant checked. Those mutants are listed as invalid with the compiler's first error, and such a run is `inconclusive`.
 - A failing test is only noticed when it is related to the changed files, because Stryker runs only those tests. A failing test elsewhere in the suite does not stop the mutation phase, and no mutant is judged against it.
 - Projects with a custom Vitest runner are not tested.

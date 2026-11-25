@@ -87,10 +87,9 @@ describe('output without a terminal', () => {
 });
 
 describe('output on a terminal', () => {
-  it('shows the banner and live progress on stderr, and leaves the cursor visible at the end', async () => {
+  it('shows the header line and live progress on stderr, and leaves the cursor visible at the end', async () => {
     const run = await cli(RUN, tty());
-    expect(run.stderr.startsWith(`${ESC}33m _${ESC}39m\n`)).toBe(true);
-    expect(stripAnsi(run.stderr)).toContain('chimpd 9.9.9');
+    expect(run.stderr.startsWith(`${ESC}1m${ESC}35mbruise 9.9.9${ESC}39m${ESC}22m  ${ESC}2mfind the soft spots in your tests${ESC}22m\n\n`)).toBe(true);
     expect(run.stderr).toContain(HIDE);
     expect(stripAnsi(run.stderr)).toContain('== Mutation phase, budget 84.0 s ==');
     expect(stripAnsi(run.stderr)).toContain('5/10 mutants');
@@ -101,26 +100,26 @@ describe('output on a terminal', () => {
   it('shows the cursor again before reporting a run that failed', async () => {
     const run = await cli(RUN, tty(), new Error('exploded'));
     expect(run.code).toBe(2);
-    expect(run.stderr.lastIndexOf(SHOW)).toBeLessThan(run.stderr.indexOf('chimpd: Error: exploded'));
+    expect(run.stderr.lastIndexOf(SHOW)).toBeLessThan(run.stderr.indexOf('bruise: Error: exploded'));
   });
 
-  it('leaves the banner out with --json, --no-banner, in CI and with NO_COLOR, but keeps the progress', async () => {
+  it('leaves the header out with --json, --no-banner and in CI, but keeps the progress', async () => {
     for (const [argv, env] of [
       [[...RUN, '--json'], {}],
       [[...RUN, '--no-banner'], {}],
       [RUN, { CI: 'true' }],
-      [RUN, { NO_COLOR: '1' }],
     ] as const) {
       const run = await cli([...argv], tty({ env }));
-      expect(stripAnsi(run.stderr)).not.toContain('chimpd 9.9.9');
+      expect(stripAnsi(run.stderr)).not.toContain('bruise 9.9.9');
       expect(stripAnsi(run.stderr)).toContain('== Mutation phase');
     }
   });
 
-  it('still shows the banner without colour when only --no-color turns colour off', async () => {
-    const run = await cli([...RUN, '--no-color'], tty());
-    expect(run.stderr).toContain('chimpd 9.9.9');
-    expect(run.stderr).not.toMatch(/\u001b\[[0-9;]*m/);
+  it('shows the same header line without colour under NO_COLOR or --no-color', async () => {
+    for (const run of [await cli([...RUN, '--no-color'], tty()), await cli(RUN, tty({ env: { NO_COLOR: '1' } }))]) {
+      expect(run.stderr.startsWith('bruise 9.9.9  find the soft spots in your tests\n\n')).toBe(true);
+      expect(run.stderr).not.toMatch(/\u001b\[[0-9;]*m/);
+    }
   });
 
   it('gives no progress with --verbose, whose target output would break the redrawn line', async () => {
@@ -131,7 +130,7 @@ describe('output on a terminal', () => {
 
   it('prints the terminal report with colour and a summary on a stdout TTY', async () => {
     const run = await cli(RUN, tty());
-    expect(run.stdout).toContain(`${ESC}1mScope: `);
+    expect(run.stdout).toContain(`${ESC}1m${ESC}35mScope: `);
     expect(stripAnsi(run.stdout)).toContain('| Summary');
     expect(stripAnsi(run.stdout)).toContain('src/clients/ledger.ts:12:20 [high 70] in postLedgerEntry');
     expect(stripAnsi(run.stdout).trimEnd().endsWith('Result: 2 findings (exit 1)')).toBe(true);

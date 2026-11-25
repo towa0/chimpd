@@ -1,67 +1,68 @@
 import { PRESETS } from '../core/index.js';
 import { exitCodeOf, LEVELS, type ExitOptions, type Finding, type RunResult } from '../orchestrator/index.js';
 import { findingDetails, plural, seconds, textSections, verdictLine, type TextSection } from '../reporter/text.js';
-import { visibleLength, type Palette } from './color.js';
+import { visibleLength } from './color.js';
+import type { Paint, Theme } from './theme.js';
 
 const INDENT = '  ';
 const DETAIL = '    ';
 
-function severityTag(finding: Finding, palette: Palette): string {
-  const tag = `[${finding.severity.level} ${finding.severity.score}]`;
-  if (finding.severity.level === 'high') return palette.red(tag);
-  if (finding.severity.level === 'medium') return palette.yellow(tag);
-  return palette.dim(tag);
+function severityTag(finding: Finding, theme: Theme): string {
+  return theme.severity[finding.severity.level](`[${finding.severity.level} ${finding.severity.score}]`);
 }
 
 /** One line per finding that starts with path:line:col, which many terminals make clickable, and its reason under it. */
-function findingsSection(result: RunResult, palette: Palette): string[] {
+function findingsSection(result: RunResult, theme: Theme): string[] {
   const shown = PRESETS[LEVELS[result.level]].findingsShown;
-  const lines = [palette.bold('Findings, most severe first:')];
+  const lines = [theme.title('Findings, most severe first:')];
   for (const finding of result.findings.slice(0, shown)) {
     const name = finding.functionName === null ? '' : ` in ${finding.functionName}`;
-    lines.push(`${palette.highlight(`${finding.file}:${finding.line}:${finding.column}`)} ${severityTag(finding, palette)}${name}`);
-    lines.push(...findingDetails(finding).map((line) => `${DETAIL}${line}`));
+    lines.push(`${theme.bold(`${finding.file}:${finding.line}:${finding.column}`)} ${severityTag(finding, theme)}${name}`);
+    lines.push(...findingDetails(finding).map((line) => theme.dim(`${DETAIL}${line}`)));
   }
   const hidden = result.findings.length - shown;
-  if (hidden > 0) lines.push(`${INDENT}${plural(hidden, 'more finding')} not shown; --json lists every finding`);
+  if (hidden > 0) lines.push(theme.dim(`${INDENT}${plural(hidden, 'more finding')} not shown; --json lists every finding`));
   return lines;
 }
 
-function phaseLine(line: string, palette: Palette): string {
+function phaseLine(line: string, theme: Theme): string {
   return line
-    .replace(/^( {2}\S+ )(completed)/, (_, lead: string, status: string) => `${lead}${palette.green(status)}`)
-    .replace(/^( {2}\S+ )(budget-exhausted|inconclusive)/, (_, lead: string, status: string) => `${lead}${palette.yellow(status)}`)
-    .replace(/^( {2}\S+ )(error)/, (_, lead: string, status: string) => `${lead}${palette.red(status)}`);
+    .replace(/^( {2}\S+ )(completed)/, (_, lead: string, status: string) => `${lead}${theme.good(status)}`)
+    .replace(/^( {2}\S+ )(budget-exhausted|inconclusive)/, (_, lead: string, status: string) => `${lead}${theme.warning(status)}`)
+    .replace(/^( {2}\S+ )(error)/, (_, lead: string, status: string) => `${lead}${theme.error(status)}`);
 }
 
-function styled(section: TextSection, palette: Palette): string[] {
+function coverageLine(line: string, theme: Theme): string {
+  if (line.includes('NOT CHECKED') || line.includes('excluded from coverage')) return theme.warning(line);
+  if (line.includes('nothing in scope was left unchecked')) return theme.good(line);
+  return line;
+}
+
+function styled(section: TextSection, theme: Theme): string[] {
   const [first = '', ...rest] = section.lines;
-  if (section.name === 'error') return [palette.red(first), ...rest];
-  if (section.name === 'coverage') {
-    return [palette.bold(first), ...rest.map((line) => (line.includes('NOT CHECKED') ? palette.yellow(line) : line))];
-  }
-  if (section.name === 'phases') return [palette.bold(first), ...rest.map((line) => phaseLine(line, palette))];
-  return [palette.bold(first), ...rest];
+  if (section.name === 'error') return [theme.error(first), ...rest];
+  if (section.name === 'coverage') return [theme.title(first), ...rest.map((line) => coverageLine(line, theme))];
+  if (section.name === 'phases') return [theme.title(first), ...rest.map((line) => phaseLine(line, theme))];
+  return [theme.title(first), ...rest];
 }
 
-function count(value: number, label: string, paint: (text: string) => string): string {
+function count(value: number, label: string, paint: Paint): string {
   const text = `${label} ${value}`;
   return value > 0 ? paint(text) : text;
 }
 
-function summaryLines(result: RunResult, palette: Palette): string[] {
+function summaryLines(result: RunResult, theme: Theme): string[] {
   const { tally } = result;
   const notTested = result.notTested.reduce((total, entry) => total + (entry.mutants ?? 0), 0);
   const unplanned = result.notTested.filter((entry) => entry.mutants === null).length;
   const mutationRan = result.phases.some((phase) => phase.name === 'mutation' && phase.status !== 'not-run');
+  const invalid = result.checked.invalidMutants;
   const mutants = mutationRan
     ? [
-        count(tally.killed, 'killed', palette.green),
-        count(tally.survived, 'survived', palette.highlight),
-        result.invalidExcluded
-          ? palette.dim(`invalid ${result.checked.invalidMutants}, excluded`)
-          : count(result.checked.invalidMutants, 'invalid', palette.yellow),
-        `${count(notTested, 'not tested', palette.yellow)}${unplanned > 0 ? ` (+${plural(unplanned, 'file')} never planned)` : ''}`,
+        count(tally.killed, 'killed', theme.good),
+        count(tally.survived, 'survived', theme.brand),
+        result.invalidExcluded ? theme.warning(`invalid ${invalid} (excluded)`) : count(invalid, 'invalid', theme.warning),
+        `${count(notTested, 'not tested', theme.warning)}${unplanned > 0 ? ` (+${plural(unplanned, 'file')} never planned)` : ''}`,
       ].join(', ')
     : 'not run';
   const faults =
@@ -70,41 +71,51 @@ function summaryLines(result: RunResult, palette: Palette): string[] {
       : tally.faults.map(
           (entry) =>
             `${entry.kind}: ${[
-              count(entry.handled, 'handled', palette.green),
-              count(entry.findings, 'findings', palette.highlight),
-              count(entry.inconclusive, 'inconclusive', palette.yellow),
+              count(entry.handled, 'handled', theme.good),
+              count(entry.findings, 'findings', theme.brand),
+              count(entry.inconclusive, 'inconclusive', theme.warning),
             ].join(', ')}`,
         );
   return [
-    palette.bold('Summary'),
+    theme.title('Summary'),
     `Mutants  ${mutants}`,
     ...faults.map((line, index) => `${index === 0 ? 'Faults   ' : '         '}${line}`),
     `Time     ${seconds(result.spentMs)} of ${seconds(result.budgetMs)}`,
   ];
 }
 
-function box(lines: readonly string[], width: number): string[] {
+function box(lines: readonly string[], width: number, theme: Theme): string[] {
   const inner = Math.max(...lines.map(visibleLength));
   if (inner + 4 > width) return [...lines];
-  const rule = `+${'-'.repeat(inner + 2)}+`;
-  return [rule, ...lines.map((line) => `| ${line}${' '.repeat(inner - visibleLength(line))} |`), rule];
+  const rule = theme.dim(`+${'-'.repeat(inner + 2)}+`);
+  const side = theme.dim('|');
+  return [rule, ...lines.map((line) => `${side} ${line}${' '.repeat(inner - visibleLength(line))} ${side}`), rule];
 }
 
-function resultLine(result: RunResult, options: ExitOptions, palette: Palette): string {
-  const line = palette.bold(verdictLine(result, options));
+function resultLine(result: RunResult, options: ExitOptions, theme: Theme): string {
   const code = exitCodeOf(result, options);
-  if (code === 1 || result.status === 'error') return palette.red(line);
-  if (code === 0 && result.status === 'completed') return palette.green(line);
-  return palette.yellow(line);
+  const paint =
+    result.status === 'error' || code === 2
+      ? theme.error
+      : code === 1
+        ? theme.brand
+        : result.status === 'completed'
+          ? theme.good
+          : theme.warning;
+  const segments = verdictLine(result, options).split(/(coverage complete|coverage partial)/);
+  const painted = segments.map((segment) =>
+    segment === 'coverage complete' ? theme.good(segment) : segment === 'coverage partial' ? theme.warning(segment) : paint(segment),
+  );
+  return theme.bold(painted.join(''));
 }
 
 /** The text report for a terminal: the plain report's content, with colour, one line per finding and a summary at the end. */
-export function renderFancyText(result: RunResult, options: ExitOptions, palette: Palette, width: number): string {
+export function renderFancyText(result: RunResult, options: ExitOptions, theme: Theme, width: number): string {
   const sections = textSections(result, options).flatMap((section): string[][] => {
     if (section.name === 'result') return [];
-    if (section.name === 'findings') return [findingsSection(result, palette)];
-    return [styled(section, palette)];
+    if (section.name === 'findings') return [findingsSection(result, theme)];
+    return [styled(section, theme)];
   });
-  const closing = result.status === 'error' ? [] : [box(summaryLines(result, palette), width)];
-  return `${[...sections, ...closing, [resultLine(result, options, palette)]].map((lines) => lines.join('\n')).join('\n\n')}\n`;
+  const closing = result.status === 'error' ? [] : [box(summaryLines(result, theme), width, theme)];
+  return `${[...sections, ...closing, [resultLine(result, options, theme)]].map((lines) => lines.join('\n')).join('\n\n')}\n`;
 }

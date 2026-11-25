@@ -104,7 +104,7 @@ export interface MutationResult {
   /** Mutants Stryker listed for mutators the preset excludes; they are not part of the results. */
   readonly excludedByPreset: number;
   readonly checker: CheckerDecision;
-  /** Name of the target's own Stryker config file, which chimpd does not load; null when there is none. */
+  /** Name of the target's own Stryker config file, which bruise does not load; null when there is none. */
   readonly targetConfigIgnored: string | null;
   readonly strykerVersion: string;
   readonly dryRunNetMs: number | null;
@@ -140,7 +140,7 @@ function testFileOf(targetRoot: string, test: WireTest): string {
   if (test.fileName !== null) {
     const relative = relativeFile(targetRoot, test.fileName);
     // Tests run inside Stryker's sandbox copy; their path there mirrors the project layout.
-    const sandbox = /^\.chimpd\/stryker-tmp\/[^/]+\/(.*)$/.exec(relative);
+    const sandbox = /^\.bruise\/stryker-tmp\/[^/]+\/(.*)$/.exec(relative);
     return sandbox?.[1] ?? relative;
   }
   return test.id.split('#')[0] ?? test.id;
@@ -446,7 +446,7 @@ export async function runMutation(request: MutationRequest): Promise<MutationRes
     checker = {
       ...checker,
       enabled: false,
-      reason: `type checker disabled: target does not type-check under chimpd's TypeScript ${checker.typescriptVersion ?? 'copy'}`,
+      reason: `type checker disabled: target does not type-check under bruise's TypeScript ${checker.typescriptVersion ?? 'copy'}`,
     };
     return attempt();
   }

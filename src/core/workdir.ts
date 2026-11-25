@@ -1,9 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-export const WORK_DIR_NAME = '.chimpd';
+export const WORK_DIR_NAME = '.bruise';
 
-/** Creates the one directory chimpd may write to in a target, hidden from the target's git status. */
+/** Creates the one directory bruise may write to in a target, hidden from the target's git status. */
 export function ensureWorkDir(targetRoot: string): string {
   const workDir = path.join(targetRoot, WORK_DIR_NAME);
   fs.mkdirSync(workDir, { recursive: true });

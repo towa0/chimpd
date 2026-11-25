@@ -34,7 +34,7 @@ import {
 import { mutationBudgetMs } from './budget.js';
 import { faultItems, mutationItems, notTestedFiles, NOTHING_CHECKED, SUITE_FAILS, tallyOf, type PhaseItems } from './findings.js';
 import {
-  ChimpdError,
+  BruiseError,
   findVitestConfig,
   loadTargetVitest,
   missingConfigMessage,
@@ -58,7 +58,7 @@ import { discoveryFinished, unreachedCalls } from './unreached.js';
 
 export { mutationBudgetMs } from './budget.js';
 export type { BudgetSplitInput } from './budget.js';
-export { ChimpdError, findVitestConfig, isSupportedVitest, loadTargetVitest, SUPPORTED_VITEST } from './target.js';
+export { BruiseError, findVitestConfig, isSupportedVitest, loadTargetVitest, SUPPORTED_VITEST } from './target.js';
 export type { TargetVitest } from './target.js';
 export * from './types.js';
 
@@ -108,16 +108,16 @@ function detailOf(error: unknown): string {
 }
 
 export async function checkTarget(cwd: string, base: string): Promise<void> {
-  if (!fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) throw new ChimpdError(`${cwd} is not a directory`);
+  if (!fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) throw new BruiseError(`${cwd} is not a directory`);
   try {
     await git(cwd, ['rev-parse', '--is-inside-work-tree']);
   } catch {
-    throw new ChimpdError(`${cwd} is not inside a git repository`);
+    throw new BruiseError(`${cwd} is not inside a git repository`);
   }
   try {
     await resolveSha(cwd, base);
   } catch {
-    throw new ChimpdError(`base ref '${base}' does not resolve to a commit in ${cwd}; fetch it or pass --base <ref>`);
+    throw new BruiseError(`base ref '${base}' does not resolve to a commit in ${cwd}; fetch it or pass --base <ref>`);
   }
 }
 
@@ -255,7 +255,7 @@ export function planScope(
   };
 }
 
-export async function runChimpd(options: RunOptions): Promise<RunResult> {
+export async function runBruise(options: RunOptions): Promise<RunResult> {
   const deps: OrchestratorDeps = { ...DEFAULT_DEPS, ...options.deps };
   const { level } = options;
   const intensity = LEVELS[level];
@@ -332,7 +332,7 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
   let vitest: TargetVitest | null = null;
   try {
     const found = findVitestConfig(targetRoot);
-    if (found === null) throw new ChimpdError(missingConfigMessage(targetRoot));
+    if (found === null) throw new BruiseError(missingConfigMessage(targetRoot));
     configFile = found;
     // Loading the target's Vitest also checks its version, which the mutation phase depends on as well.
     vitest = await deps.loadVitest(targetRoot);

@@ -59,11 +59,11 @@ describe('parseBaseline', () => {
   });
 
   it.each([
-    ['{ not json', /chimpd-baseline\.json is not valid JSON: /],
-    ['[]', /chimpd-baseline\.json must hold a JSON object/],
-    [baselineText({ entries: [] }), /has version undefined; this chimpd reads version 1/],
-    [baselineText({ version: 2, entries: [] }), /has version 2; this chimpd reads version 1/],
-    [baselineText({ version: '1', entries: [] }), /has version "1"; this chimpd reads version 1/],
+    ['{ not json', /bruise-baseline\.json is not valid JSON: /],
+    ['[]', /bruise-baseline\.json must hold a JSON object/],
+    [baselineText({ entries: [] }), /has version undefined; this version of bruise reads baseline version 1/],
+    [baselineText({ version: 2, entries: [] }), /has version 2; this version of bruise reads baseline version 1/],
+    [baselineText({ version: '1', entries: [] }), /has version "1"; this version of bruise reads baseline version 1/],
     [baselineText({ version: 1 }), /"entries" must be an array/],
     [baselineText({ version: 1, entries: [], extra: true }), /unknown field "extra"/],
     [baselineText({ version: 1, entries: ['x'] }), /entry 1 is not an object/],
@@ -103,6 +103,6 @@ describe('loadBaseline', () => {
   it('fails on an unknown version instead of ignoring it', async () => {
     const target = repo();
     target.write(BASELINE_FILE, baselineText({ version: 9, entries: [] }));
-    await expect(loadBaseline(target.dir)).rejects.toThrow('has version 9; this chimpd reads version 1');
+    await expect(loadBaseline(target.dir)).rejects.toThrow('has version 9; this version of bruise reads baseline version 1');
   });
 });

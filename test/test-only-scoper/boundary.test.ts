@@ -13,7 +13,7 @@ afterEach(() => {
 });
 
 function project(files: Record<string, string>): string {
-  const dir = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'chimpd-graph-'));
+  const dir = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'bruise-graph-'));
   temps.push(dir);
   const all = { 'tsconfig.json': JSON.stringify({ compilerOptions: { module: 'NodeNext', moduleResolution: 'NodeNext' } }), ...files };
   for (const [file, content] of Object.entries(all)) {

@@ -7,7 +7,7 @@ import { PRESETS } from '../../src/core/index.js';
 import type { FaultRunRequest } from '../../src/fault-run/index.js';
 import {
   exitCodeOf,
-  runChimpd,
+  runBruise,
   type OrchestratorDeps,
   type RunOptions,
   type RunResult,
@@ -92,23 +92,23 @@ function phase(result: RunResult, name: 'mutation' | 'faults') {
 
 describe('preconditions', () => {
   it('reports a directory outside any git repository as a tool error', async () => {
-    const dir = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'chimpd-nogit-'));
+    const dir = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'bruise-nogit-'));
     cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }));
-    const result = await runChimpd({ cwd: dir, level: 'poke', seed: 1 });
+    const result = await runBruise({ cwd: dir, level: 'poke', seed: 1 });
     expect(result).toMatchObject({ status: 'error', git: null, scope: null, phases: [], findings: [], seed: 1 });
     expect(result.error).toContain('is not inside a git repository');
     expect(exitCodeOf(result)).toBe(2);
   });
 
   it('reports a directory that does not exist as a tool error', async () => {
-    const result = await runChimpd({ cwd: path.join(os.tmpdir(), 'chimpd-missing-dir-x'), level: 'poke' });
+    const result = await runBruise({ cwd: path.join(os.tmpdir(), 'bruise-missing-dir-x'), level: 'poke' });
     expect(result.status).toBe('error');
     expect(result.error).toContain('is not a directory');
   });
 
   it('reports a missing base ref as a tool error', async () => {
     const repo = changedRepo();
-    const result = await runChimpd({ cwd: repo.dir, level: 'poke', base: 'origin/nope' });
+    const result = await runBruise({ cwd: repo.dir, level: 'poke', base: 'origin/nope' });
     expect(result.status).toBe('error');
     expect(result.error).toBe(`base ref 'origin/nope' does not resolve to a commit in ${repo.dir}; fetch it or pass --base <ref>`);
     expect(exitCodeOf(result)).toBe(2);
@@ -117,7 +117,7 @@ describe('preconditions', () => {
   it('reports a target without a Vitest config as a tool error, after scoping', async () => {
     const repo = changedRepo({ config: false });
     const run = harness(repo);
-    const result = await runChimpd(run.options());
+    const result = await runBruise(run.options());
     expect(result.status).toBe('error');
     expect(result.error).toContain('no Vitest config found in');
     expect(result.scope?.changedSourceFiles).toEqual(['src/a.ts']);
@@ -129,9 +129,9 @@ describe('preconditions', () => {
     const repo = changedRepo({ testOnly: true });
     const run = harness(repo, {
       computeBoundary: () => ({ files: [{ file: 'src/a.ts', distance: 1 }], truncated: 0, mocked: [], sourceRoot: 'src' }),
-      loadVitest: () => Promise.reject(new Error(`Vitest 3.2.4 in ${repo.dir} is not supported; chimpd needs Vitest >=4.1 <6`)),
+      loadVitest: () => Promise.reject(new Error(`Vitest 3.2.4 in ${repo.dir} is not supported; bruise needs Vitest >=4.1 <6`)),
     });
-    const result = await runChimpd(run.options());
+    const result = await runBruise(run.options());
     expect(result).toMatchObject({ status: 'error', phases: [] });
     expect(result.error).toContain('Vitest 3.2.4');
     expect(run.mutationRequests).toEqual([]);
@@ -140,7 +140,7 @@ describe('preconditions', () => {
   it('reports a target whose Vitest cannot be loaded as a tool error before any phase runs', async () => {
     const repo = changedRepo();
     const run = harness(repo, { loadVitest: () => Promise.reject(new Error(`Vitest is not installed in ${repo.dir}`)) });
-    const result = await runChimpd(run.options());
+    const result = await runBruise(run.options());
     expect(result).toMatchObject({ status: 'error', error: `Vitest is not installed in ${repo.dir}`, phases: [] });
     expect(run.mutationRequests).toEqual([]);
   });
@@ -151,7 +151,7 @@ describe('preconditions', () => {
     repo.branch('origin/main', repo.commit('Base'));
     repo.write('README.md', 'two\n');
     repo.commit('Docs');
-    const result = await runChimpd({ cwd: repo.dir, level: 'poke' });
+    const result = await runBruise({ cwd: repo.dir, level: 'poke' });
     expect(result.status).toBe('nothing-in-scope');
     expect(result.phases.map((entry) => [entry.name, entry.status])).toEqual([
       ['mutation', 'not-run'],
@@ -171,7 +171,7 @@ describe('budget split', () => {
         return Promise.resolve(mutationResult());
       },
     });
-    const result = await runChimpd(run.options());
+    const result = await runBruise(run.options());
     const total = PRESETS[1].budgetMs;
     expect(run.mutationRequests.map((request) => request.budgetMs)).toEqual([Math.floor(total * PRESETS[1].mutationShare)]);
     expect(run.faultRequests.map((request) => request.budgetMs)).toEqual([total - 10_000]);
@@ -183,7 +183,7 @@ describe('budget split', () => {
     const repo = changedRepo();
     for (const [level, intensity] of [['prod', 2], ['shake', 3]] as const) {
       const run = harness(repo);
-      await runChimpd(run.options({ level }));
+      await runBruise(run.options({ level }));
       const preset = PRESETS[intensity];
       expect(run.mutationRequests[0]?.budgetMs).toBe(Math.floor(preset.budgetMs * preset.mutationShare));
       expect(run.mutationRequests[0]?.intensity).toBe(intensity);
@@ -197,7 +197,7 @@ describe('budget split', () => {
       runMutation: () =>
         Promise.resolve(mutationResult({ mutants: [mutant({ status: 'Killed', scopeKind: 'test-boundary', killedBy: ['test/a.test.ts#a'] })] })),
     });
-    const result = await runChimpd(run.options());
+    const result = await runBruise(run.options());
     expect(result.scope).toMatchObject({ mode: 'test-only', boundaryFiles: ['src/a.ts'], changedTestFiles: ['test/a.test.ts'] });
     expect(run.mutationRequests.map((request) => [request.budgetMs, request.ranges.map((range) => range.kind)])).toEqual([
       [PRESETS[1].budgetMs, ['test-boundary']],
@@ -212,7 +212,7 @@ describe('budget split', () => {
     const run = harness(repo);
     const options = run.options();
     const deps = options.deps ?? {};
-    await runChimpd({
+    await runBruise({
       ...options,
       deps: {
         ...deps,
@@ -248,7 +248,7 @@ describe('budget exhaustion', () => {
           }),
         ),
     });
-    const result = await runChimpd(run.options());
+    const result = await runBruise(run.options());
     expect(phase(result, 'mutation')).toMatchObject({
       status: 'budget-exhausted',
       statusReason: 'the budget ran out before every mutant was tested',
@@ -276,7 +276,7 @@ describe('budget exhaustion', () => {
     const run = harness(repo, {
       runMutation: () => Promise.resolve(mutationResult({ mutants: [killed], batches: [batch({ outcome: 'killed-over-share' })] })),
     });
-    const result = await runChimpd(run.options());
+    const result = await runBruise(run.options());
     expect(phase(result, 'mutation')?.status).toBe('budget-exhausted');
     expect(result.status).toBe('partial');
     expect(exits(result)).toEqual([0, 2]);
@@ -299,7 +299,7 @@ describe('budget exhaustion', () => {
           }),
         ),
     });
-    const result = await runChimpd(run.options());
+    const result = await runBruise(run.options());
     expect(renderText(result)).toContain(
       'Result: 0 findings, coverage partial: 1 not checked, listed above; 1 invalid mutant excluded (exit 0; 2 with --strict)',
     );
@@ -313,7 +313,7 @@ describe('budget exhaustion', () => {
         return Promise.resolve(mutationResult({ mutants: [killed, mutant()] }));
       },
     });
-    const result = await runChimpd(run.options());
+    const result = await runBruise(run.options());
     expect(run.faultRequests).toEqual([]);
     expect(phase(result, 'faults')).toMatchObject({
       status: 'budget-exhausted',
@@ -339,7 +339,7 @@ describe('budget exhaustion', () => {
           }),
         ),
     });
-    const result = await runChimpd(run.options());
+    const result = await runBruise(run.options());
     expect(phase(result, 'faults')).toMatchObject({
       status: 'budget-exhausted',
       statusReason: 'the budget ran out before every call site was faulted',
@@ -363,7 +363,7 @@ describe('budget exhaustion', () => {
         ),
       runFaults: () => Promise.resolve(faultRun({ status: 'budget-exhausted', statusReason: 'discovery ran out of time' })),
     });
-    const result = await runChimpd(run.options());
+    const result = await runBruise(run.options());
     expect(result.checked).toEqual({ mutants: 0, invalidMutants: 0, callSites: 0 });
     expect(result.skipped).toEqual([
       { source: 'fault', file: 'src/a.ts', line: null, reason: 'not faulted: discovery ran out of time' },
@@ -381,7 +381,7 @@ describe('phase failures', () => {
       runMutation: () => Promise.reject(new Error('stryker exploded')),
       runFaults: () => Promise.resolve(faultRun({ results: [siteResult()] })),
     });
-    const result = await runChimpd(run.options());
+    const result = await runBruise(run.options());
     expect(phase(result, 'mutation')).toMatchObject({ status: 'error', statusReason: 'stryker exploded' });
     expect(phase(result, 'faults')?.status).toBe('completed');
     expect(result.skipped).toEqual([
@@ -397,7 +397,7 @@ describe('phase failures', () => {
       runMutation: () =>
         Promise.resolve(mutationResult({ mutants: [killed], batches: [batch({ outcome: 'failed', error: 'dry run failed' })] })),
     });
-    const result = await runChimpd(run.options());
+    const result = await runBruise(run.options());
     expect(phase(result, 'mutation')).toMatchObject({ status: 'error', statusReason: 'mutation batch 0 failed: dry run failed' });
     expect(exits(result)).toEqual([2, 2]);
   });
@@ -408,7 +408,7 @@ describe('phase failures', () => {
       runMutation: () => Promise.resolve(mutationResult({ mutants: [killed, mutant()] })),
       runFaults: () => Promise.reject(new Error('vitest would not start')),
     });
-    const result = await runChimpd(run.options());
+    const result = await runBruise(run.options());
     expect(phase(result, 'faults')).toMatchObject({ status: 'error', statusReason: 'vitest would not start' });
     expect(result.skipped).toEqual([
       { source: 'fault', file: 'src/a.ts', line: null, reason: 'not faulted: the fault phase failed: vitest would not start' },
@@ -423,7 +423,7 @@ describe('phase failures', () => {
       runMutation: () => Promise.resolve(mutationResult({ mutants: [killed] })),
       runFaults: () => Promise.resolve(faultRun({ status: 'inconclusive', statusReason: 'fetch was patched before the tests loaded' })),
     });
-    const result = await runChimpd(run.options());
+    const result = await runBruise(run.options());
     expect(phase(result, 'faults')).toMatchObject({ status: 'inconclusive', statusReason: 'fetch was patched before the tests loaded' });
     expect(result.skipped).toEqual([
       { source: 'fault', file: 'src/a.ts', line: null, reason: 'not faulted: fetch was patched before the tests loaded' },
@@ -437,7 +437,7 @@ describe('phase failures', () => {
     const run = harness(repo, {
       runFaults: () => Promise.resolve(faultRun({ status: 'inconclusive', statusReason: 'fetch was patched before the tests loaded' })),
     });
-    const result = await runChimpd(run.options());
+    const result = await runBruise(run.options());
     expect(result.status).toBe('inconclusive');
     expect(exits(result)).toEqual([2, 2]);
   });
@@ -458,7 +458,7 @@ describe('findings', () => {
           }),
         ),
     });
-    const result = await runChimpd(run.options());
+    const result = await runBruise(run.options());
     expect(result.findings.map((finding) => [finding.source, finding.kind, finding.line, finding.severity.score])).toEqual([
       ['fault', 'hang-no-timeout', 5, 70],
       ['mutation', 'survived', 2, 55],
@@ -475,7 +475,7 @@ describe('findings', () => {
       runMutation: () => Promise.resolve(mutationResult({ mutants: [killed] })),
       runFaults: () => Promise.resolve(faultRun({ results: [siteResult()] })),
     });
-    const result = await runChimpd(run.options());
+    const result = await runBruise(run.options());
     expect(result).toMatchObject({ status: 'completed', statusReason: null, findings: [], skipped: [], inconclusive: [] });
     expect(result.checked).toEqual({ mutants: 1, invalidMutants: 0, callSites: 1 });
     expect(exits(result)).toEqual([0, 0]);
@@ -501,7 +501,7 @@ describe('findings', () => {
         ),
       runFaults: () => Promise.resolve(faultRun({ results: [siteResult()] })),
     });
-    const result = await runChimpd(run.options());
+    const result = await runBruise(run.options());
     expect(result.invalid).toEqual([
       {
         source: 'mutation',
@@ -534,7 +534,7 @@ describe('findings', () => {
           }),
         ),
     });
-    const result = await runChimpd(run.options());
+    const result = await runBruise(run.options());
     expect(result.inconclusive).toEqual([
       { source: 'fault', file: 'src/a.ts', line: 5, reason: 'the test did not reach the call site under the fault', faultKind: 'blackhole' },
     ]);
@@ -549,7 +549,7 @@ describe('findings', () => {
     const repo = changedRepo();
     const conflict = { testFile: 'test/a.test.ts', patched: ['fetch'] };
     const run = harness(repo, { runFaults: () => Promise.resolve(faultRun({ results: [siteResult()], conflicts: [conflict] })) });
-    const result = await runChimpd(run.options());
+    const result = await runBruise(run.options());
     expect(result).toMatchObject({ status: 'partial', conflicts: [conflict] });
     expect(exits(result)).toEqual([0, 2]);
   });
@@ -571,7 +571,7 @@ describe('findings', () => {
           }),
         ),
     });
-    const result = await runChimpd(run.options());
+    const result = await runBruise(run.options());
     expect(result.findings.map((finding) => finding.line)).toEqual([2]);
     expect(result.skipped).toEqual([
       {
@@ -589,10 +589,10 @@ describe('findings', () => {
     const repo = changedRepo();
     const run = harness(repo);
     const onTargetOutput = (): void => undefined;
-    await runChimpd({ ...run.options(), onTargetOutput });
+    await runBruise({ ...run.options(), onTargetOutput });
     expect(run.mutationRequests.map((request) => request.onTargetOutput)).toEqual([onTargetOutput]);
     expect(run.faultRequests.map((request) => request.onTargetOutput)).toEqual([onTargetOutput]);
-    await runChimpd(run.options());
+    await runBruise(run.options());
     expect(run.mutationRequests[1]?.onTargetOutput).toBeUndefined();
     expect(run.faultRequests[1]?.onTargetOutput).toBeUndefined();
   });
@@ -600,10 +600,10 @@ describe('findings', () => {
   it('returns the seed it was given, and picks one when it was not', async () => {
     const repo = changedRepo();
     const run = harness(repo);
-    expect((await runChimpd(run.options({ seed: 1234 }))).seed).toBe(1234);
+    expect((await runBruise(run.options({ seed: 1234 }))).seed).toBe(1234);
     const { seed, ...withoutSeed } = run.options();
     expect(seed).toBe(7);
-    const picked = (await runChimpd(withoutSeed)).seed;
+    const picked = (await runBruise(withoutSeed)).seed;
     expect(Number.isInteger(picked)).toBe(true);
     expect(picked).toBeGreaterThanOrEqual(0);
   });
@@ -611,12 +611,12 @@ describe('findings', () => {
   it('passes the seed to both phases, the picked one too', async () => {
     const repo = changedRepo();
     const run = harness(repo);
-    await runChimpd(run.options({ seed: 99 }));
+    await runBruise(run.options({ seed: 99 }));
     expect(run.mutationRequests.map((request) => request.seed)).toEqual([99]);
     expect(run.faultRequests.map((request) => request.seed)).toEqual([99]);
     const { seed, ...withoutSeed } = run.options();
     expect(seed).toBe(7);
-    const picked = (await runChimpd(withoutSeed)).seed;
+    const picked = (await runBruise(withoutSeed)).seed;
     expect(run.mutationRequests[1]?.seed).toBe(picked);
     expect(run.faultRequests[1]?.seed).toBe(picked);
   });
@@ -630,14 +630,14 @@ describe('findings', () => {
         return { files: [], truncated: 0, mocked: [], sourceRoot: 'src' };
       },
     });
-    await runChimpd(run.options({ seed: 5 }));
+    await runBruise(run.options({ seed: 5 }));
     expect(seeds).toEqual([5]);
   });
 
   it.each([-1, 1.5, 2 ** 31])('reports the seed %s as a tool error without scoping', async (seed) => {
     const repo = changedRepo();
     const run = harness(repo);
-    const result = await runChimpd(run.options({ seed }));
+    const result = await runBruise(run.options({ seed }));
     expect(result.status).toBe('error');
     expect(result.error).toBe(`seed must be an integer from 0 to 2147483647, not ${seed}`);
     expect(result.scope).toBeNull();
@@ -683,7 +683,7 @@ describe('fault kinds', () => {
           }),
         ),
     });
-    const result = await runChimpd(run.options({ level: 'shake' }));
+    const result = await runBruise(run.options({ level: 'shake' }));
     expect(result.findings).toMatchObject([
       { source: 'fault', kind: 'refusal-mishandled', line: 5, fault: { kind: 'connection-refused', verdict: 'refusal-mishandled' } },
     ]);
@@ -702,7 +702,7 @@ describe('fault kinds', () => {
     ['http-500', 'status-mishandled', 'error-status-mishandled'],
     ['malformed-json', 'parse-mishandled', 'malformed-json-mishandled'],
   ] as const)('sets aside a %s finding (%s) under an ignore comment or a baseline entry like any other', async (kind, verdict, findingKind) => {
-    const comment = '  // chimpd-ignore: the caller retries the whole job\n';
+    const comment = '  // bruise-ignore: the caller retries the whole job\n';
     const source = `export async function load(url: string): Promise<void> {\n${comment}  await fetch(url);\n}\n`;
     const repo = changedRepo({ changedSource: source });
     const refused = siteResult({
@@ -713,7 +713,7 @@ describe('fault kinds', () => {
       reason: 'the fault was not handled',
     });
     const run = harness(repo, { runFaults: () => Promise.resolve(faultRun({ results: [refused] })) });
-    const result = await runChimpd(run.options({ level: 'shake' }));
+    const result = await runBruise(run.options({ level: 'shake' }));
     expect(result.findings).toEqual([]);
     expect(result.ignored).toMatchObject([{ by: 'inline', finding: { kind: findingKind, fault: { kind } } }]);
 
@@ -722,7 +722,7 @@ describe('fault kinds', () => {
     repo.write(BASELINE_FILE, serializeBaseline([{ source: 'fault', file: 'src/a.ts', function: 'load', kind: findingKind, reason: null }]));
     const moved = siteResult({ ...refused, site: site({ key: 'src/a.ts:2:9', line: 2, column: 9 }) });
     const again = harness(repo, { runFaults: () => Promise.resolve(faultRun({ results: [moved] })) });
-    const baselined = await runChimpd(again.options({ level: 'shake' }));
+    const baselined = await runBruise(again.options({ level: 'shake' }));
     expect(baselined.findings).toEqual([]);
     expect(baselined.ignored).toMatchObject([{ by: 'baseline', finding: { kind: findingKind } }]);
   });
@@ -734,7 +734,7 @@ describe('verdict honesty', () => {
     const run = harness(repo, {
       runMutation: () => Promise.resolve(mutationResult({ mutants: [compileError(2), compileError(3)] })),
     });
-    const result = await runChimpd(run.options());
+    const result = await runBruise(run.options());
     expect(result.checked).toEqual({ mutants: 0, invalidMutants: 2, callSites: 0 });
     expect(result).toMatchObject({ status: 'inconclusive', statusReason: 'no mutant in scope could run' });
     expect(exits(result)).toEqual([2, 2]);
@@ -745,7 +745,7 @@ describe('verdict honesty', () => {
     const run = harness(repo, {
       runMutation: () => Promise.resolve(mutationResult({ mutants: [killed, compileError(2), compileError(3), compileError(4)] })),
     });
-    const result = await runChimpd(run.options());
+    const result = await runBruise(run.options());
     expect(result).toMatchObject({ status: 'completed', statusReason: null, invalidExcluded: true });
     expect(result.checked).toEqual({ mutants: 1, invalidMutants: 3, callSites: 0 });
     expect(result.invalid.map((item) => [item.line, item.reason])).toEqual([
@@ -765,7 +765,7 @@ describe('verdict honesty', () => {
       runMutation: () => Promise.resolve(mutationResult({ mutants: [compileError(2)] })),
       runFaults: () => Promise.resolve(faultRun({ results: [siteResult()] })),
     });
-    const result = await runChimpd(run.options());
+    const result = await runBruise(run.options());
     expect(result).toMatchObject({ status: 'partial', invalidExcluded: false });
     expect(exits(result)).toEqual([0, 2]);
     expect(renderText(result)).toContain('coverage partial: 1 invalid, listed above');
@@ -774,14 +774,14 @@ describe('verdict honesty', () => {
   it('does not exclude anything when every mutant in scope was invalid', async () => {
     const repo = changedRepo();
     const run = harness(repo, { runMutation: () => Promise.resolve(mutationResult({ mutants: [compileError(2)] })) });
-    const result = await runChimpd(run.options());
+    const result = await runBruise(run.options());
     expect(result).toMatchObject({ status: 'inconclusive', invalidExcluded: false });
   });
 
   it('is nothing-checkable, exit 0 and 2 with --strict, when the change has no mutants and no outgoing calls', async () => {
     const repo = changedRepo();
     const run = harness(repo, { runMutation: () => Promise.resolve(mutationResult({ mutants: [] })) });
-    const result = await runChimpd(run.options());
+    const result = await runBruise(run.options());
     expect(result).toMatchObject({
       status: 'nothing-checkable',
       statusReason: 'the changed code produces no mutants at this level and makes no outgoing calls',
@@ -792,7 +792,7 @@ describe('verdict honesty', () => {
   it('lists a changed outgoing call that no test reaches as not checked, and the run as partial', async () => {
     const repo = changedRepo({ changedSource: FETCH_SOURCE });
     const run = harness(repo, { runMutation: () => Promise.resolve(mutationResult({ mutants: [killed] })) });
-    const result = await runChimpd(run.options());
+    const result = await runBruise(run.options());
     expect(result.skipped).toEqual([
       { source: 'fault', file: 'src/a.ts', line: 6, reason: 'changed call to fetch at src/a.ts:6 is not reached by any test' },
     ]);
@@ -807,14 +807,14 @@ describe('verdict honesty', () => {
       runMutation: () => Promise.resolve(mutationResult({ mutants: [killed] })),
       runFaults: () => Promise.resolve(faultRun({ results: [siteResult({ site: reached })] })),
     });
-    const result = await runChimpd(run.options());
+    const result = await runBruise(run.options());
     expect(result).toMatchObject({ status: 'completed', skipped: [] });
   });
 
   it('says so when the changed code reaches no outgoing call, instead of showing 0 call sites silently', async () => {
     const repo = changedRepo();
     const run = harness(repo, { runMutation: () => Promise.resolve(mutationResult({ mutants: [killed] })) });
-    const result = await runChimpd(run.options());
+    const result = await runBruise(run.options());
     expect(result.status).toBe('completed');
     expect(phase(result, 'faults')).toMatchObject({
       status: 'completed',
@@ -835,7 +835,7 @@ describe('verdict honesty', () => {
       runMutation: () => Promise.resolve(mutationResult({ mutants: [killed] })),
       runFaults: () => Promise.resolve(faultRun({ results: [siteResult()] })),
     });
-    const result = await runChimpd(run.options());
+    const result = await runBruise(run.options());
     expect(phase(result, 'faults')).toMatchObject({ status: 'completed', statusReason: null });
   });
 
@@ -855,7 +855,7 @@ describe('verdict honesty', () => {
       runMutation: () => Promise.resolve(mutationResult({ mutants: [killed] })),
       runFaults: () => Promise.resolve(faultRun({ results: [siteResult({ site: wrapper })] })),
     });
-    const result = await runChimpd(run.options());
+    const result = await runBruise(run.options());
     expect(result).toMatchObject({ status: 'completed', skipped: [] });
   });
 
@@ -887,7 +887,7 @@ describe('verdict honesty', () => {
           }),
         ),
     });
-    const result = await runChimpd(run.options());
+    const result = await runBruise(run.options());
     expect(result.findings[0]?.fault).toMatchObject({ reachedFrom: ['src/a.ts total'], notFaultedFrom: ['src/b.ts save'] });
     expect(result.skipped).toContainEqual({
       source: 'fault',
@@ -903,7 +903,7 @@ describe('verdict honesty', () => {
   it('is inconclusive when the only things in scope are invalid mutants and an unreached call', async () => {
     const repo = changedRepo({ changedSource: FETCH_SOURCE });
     const run = harness(repo, { runMutation: () => Promise.resolve(mutationResult({ mutants: [compileError(6)] })) });
-    const result = await runChimpd(run.options());
+    const result = await runBruise(run.options());
     expect(result.status).toBe('inconclusive');
     expect(exits(result)).toEqual([2, 2]);
   });
@@ -926,7 +926,7 @@ describe('verdict honesty', () => {
           }),
         ),
     });
-    const result = await runChimpd(run.options());
+    const result = await runBruise(run.options());
     expect(phase(result, 'mutation')).toMatchObject({
       status: 'inconclusive',
       statusReason: "the target's own tests fail before any mutant runs: There were failed tests in the initial test run.",
@@ -944,7 +944,7 @@ describe('verdict honesty', () => {
   it('never renders clean or "everything in scope was checked" for a run where nothing could run', async () => {
     const repo = changedRepo();
     const run = harness(repo, { runMutation: () => Promise.resolve(mutationResult({ mutants: [compileError(2)] })) });
-    const text = renderText(await runChimpd(run.options()));
+    const text = renderText(await runBruise(run.options()));
     expect(text).not.toContain('clean');
     expect(text).not.toContain('everything in scope was checked');
     expect(text).not.toContain('nothing in scope was left unchecked');
@@ -971,7 +971,7 @@ describe('error reporting', () => {
           }),
         ),
     });
-    const result = await runChimpd(run.options());
+    const result = await runBruise(run.options());
     expect(result.skipped).toContainEqual({
       source: 'mutation',
       file: 'src/a.ts',
@@ -989,7 +989,7 @@ describe('error reporting', () => {
         Promise.resolve(mutationResult({ batches: [batch({ outcome: 'failed', planned: null, tested: 0, error: BOOM })] })),
       runFaults: () => Promise.reject(thrown),
     });
-    const result = await runChimpd(run.options());
+    const result = await runBruise(run.options());
     expect(phase(result, 'mutation')).toMatchObject({ statusReason: 'mutation batch 0 failed: boom from config', detail: BOOM });
     expect(phase(result, 'faults')).toMatchObject({ statusReason: 'boom from config', detail: BOOM });
     expect(result.skipped).toContainEqual({
@@ -1008,7 +1008,7 @@ describe('error reporting', () => {
       runMutation: () => Promise.resolve(mutationResult({ mutants: [killed], timings: mutationTimings })),
       runFaults: () => Promise.resolve(faultRun({ results: [siteResult()], timings: faultTimings })),
     });
-    const result = await runChimpd(run.options());
+    const result = await runBruise(run.options());
     expect(phase(result, 'mutation')?.timings).toEqual(mutationTimings);
     expect(phase(result, 'faults')?.timings).toEqual(faultTimings);
     expect(renderText(result)).toContain(
@@ -1027,7 +1027,7 @@ describe('error reporting', () => {
     const repo = changedRepo();
     const events: ProgressEvent[] = [];
     const run = harness(repo, { runMutation: () => Promise.resolve(mutationResult({ mutants: [killed] })) });
-    const result = await runChimpd(run.options({ onProgress: (event) => events.push(event) }));
+    const result = await runBruise(run.options({ onProgress: (event) => events.push(event) }));
     expect(events.map((event) => [event.type, 'phase' in event ? event.phase : null])).toEqual([
       ['phase-start', 'mutation'],
       ['phase-end', 'mutation'],
@@ -1046,7 +1046,7 @@ describe('error reporting', () => {
     repo.branch('origin/main', repo.commit('Base'));
     repo.write('README.md', 'more docs\n');
     repo.commit('Docs');
-    const result = await runChimpd(harness(repo).options());
+    const result = await runBruise(harness(repo).options());
     expect(result.status).toBe('nothing-in-scope');
     expect(readTimings(repo.dir)).toEqual([]);
   });
@@ -1063,7 +1063,7 @@ describe('error reporting', () => {
         return Promise.resolve(faultRun({ results: [siteResult()] }));
       },
     });
-    const result = await runChimpd(run.options());
+    const result = await runBruise(run.options());
     for (const entry of result.phases) {
       expect(Number.isInteger(entry.budgetMs)).toBe(true);
       expect(Number.isInteger(entry.spentMs)).toBe(true);
@@ -1085,7 +1085,7 @@ describe('baseline and inline ignores', () => {
     const repo = changedRepo();
     repo.write(BASELINE_FILE, baselineFor(repo, 2, 'equivalent here'));
     const run = harness(repo, { runMutation: () => Promise.resolve(mutationResult({ mutants: [survivor(2)] })) });
-    const result = await runChimpd(run.options());
+    const result = await runBruise(run.options());
     expect(result.findings).toEqual([]);
     expect(result.ignored).toMatchObject([{ by: 'baseline', reason: 'equivalent here', finding: { kind: 'survived', line: 2 } }]);
     expect(result.baseline).toMatchObject({ present: true, entries: 1, stale: [], notEvaluated: [] });
@@ -1095,9 +1095,9 @@ describe('baseline and inline ignores', () => {
   });
 
   it('reports an ignore comment without a reason as a finding and does not honour it', async () => {
-    const repo = changedRepo({ changedSource: SOURCE.replace('  return a + b;', '  // chimpd-ignore\n  return a - b;') });
+    const repo = changedRepo({ changedSource: SOURCE.replace('  return a + b;', '  // bruise-ignore\n  return a - b;') });
     const run = harness(repo, { runMutation: () => Promise.resolve(mutationResult({ mutants: [survivor(3)] })) });
-    const result = await runChimpd(run.options());
+    const result = await runBruise(run.options());
     expect(result.findings.map(({ kind, line }) => [kind, line])).toEqual([
       ['survived', 3],
       ['invalid-ignore', 2],
@@ -1107,9 +1107,9 @@ describe('baseline and inline ignores', () => {
   });
 
   it('honours an ignore comment with a reason', async () => {
-    const repo = changedRepo({ changedSource: SOURCE.replace('  return a + b;', '  // chimpd-ignore: subtraction is intended\n  return a - b;') });
+    const repo = changedRepo({ changedSource: SOURCE.replace('  return a + b;', '  // bruise-ignore: subtraction is intended\n  return a - b;') });
     const run = harness(repo, { runMutation: () => Promise.resolve(mutationResult({ mutants: [survivor(3)] })) });
-    const result = await runChimpd(run.options());
+    const result = await runBruise(run.options());
     expect(result.findings).toEqual([]);
     expect(result.ignored).toMatchObject([{ by: 'inline', reason: 'subtraction is intended' }]);
     expect(exitCodeOf(result)).toBe(0);
@@ -1120,20 +1120,20 @@ describe('baseline and inline ignores', () => {
     repo.write(BASELINE_FILE, baselineFor(repo, 2, null));
     const killed = { ...survivor(2), status: 'Killed' as const };
     const run = harness(repo, { runMutation: () => Promise.resolve(mutationResult({ mutants: [killed] })) });
-    const result = await runChimpd(run.options());
+    const result = await runBruise(run.options());
     expect(result.baseline?.stale).toHaveLength(1);
     expect(result.status).toBe('completed');
     expect(exitCodeOf(result)).toBe(0);
   });
 
   it.each([
-    ['a corrupt file', '{ "version": 1, ', 'chimpd-baseline.json is not valid JSON'],
-    ['an unknown version', '{ "version": 3, "entries": [] }\n', 'chimpd-baseline.json has version 3; this chimpd reads version 1'],
+    ['a corrupt file', '{ "version": 1, ', 'bruise-baseline.json is not valid JSON'],
+    ['an unknown version', '{ "version": 3, "entries": [] }\n', 'bruise-baseline.json has version 3; this version of bruise reads baseline version 1'],
   ])('stops with a tool error on %s, before any phase runs', async (_label, content, message) => {
     const repo = changedRepo();
     repo.write(BASELINE_FILE, content);
     const run = harness(repo);
-    const result = await runChimpd(run.options());
+    const result = await runBruise(run.options());
     expect(result.status).toBe('error');
     expect(result.error).toContain(message);
     expect(run.mutationRequests).toEqual([]);
@@ -1143,7 +1143,7 @@ describe('baseline and inline ignores', () => {
 
   it('has no baseline report without a baseline file and nothing ignored', async () => {
     const repo = changedRepo();
-    const result = await runChimpd(harness(repo).options());
+    const result = await runBruise(harness(repo).options());
     expect(result.baseline).toMatchObject({ present: false, entries: 0 });
     expect(result.ignored).toEqual([]);
   });

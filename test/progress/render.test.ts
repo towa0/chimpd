@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { applyEvent, INITIAL_STATE, phaseFooter, phaseHeader, renderStatus, type ProgressState } from '../../src/progress/render.js';
-import { PLAIN } from '../../src/terminal/color.js';
+import { stripAnsi } from '../../src/terminal/color.js';
+import { PLAIN, THEMED } from '../../src/terminal/theme.js';
 import { RECORDED } from '../helpers/progress-events.js';
 
 const ASCII = /^[\x20-\x7e]*$/;
@@ -53,8 +54,31 @@ describe('status line', () => {
     expect(line).toContain('...');
   });
 
+  it('paints the spinner and the bar fill in the brand colour and the track dim, without changing the width', () => {
+    const plain = renderStatus(stateAfter(4), { now: 61_200, columns: 120 });
+    const themed = renderStatus(stateAfter(4), { now: 61_200, columns: 120 }, THEMED);
+    expect(themed).toBe(
+      '\u001b[35m|\u001b[39m [\u001b[35m##########\u001b[39m\u001b[2m----------\u001b[22m] 5/10 mutants  61.2 s / 84.0 s  src/live/statuses.ts',
+    );
+    expect(stripAnsi(themed)).toBe(plain);
+    for (const columns of [80, 45, 20, 5, 1]) {
+      expect(stripAnsi(renderStatus(stateAfter(4), { now: 61_200, columns }, THEMED))).toBe(renderStatus(stateAfter(4), { now: 61_200, columns }));
+    }
+  });
+
   it('draws nothing between phases', () => {
     expect(renderStatus(INITIAL_STATE, { now: 0, columns: 80 })).toBe('');
+  });
+
+  it('titles a phase in bold brand colour and colours its outcome by role', () => {
+    expect(phaseHeader({ type: 'phase-start', phase: 'faults', budgetMs: 40_000, at: 0 }, THEMED)).toBe(
+      '\u001b[1m\u001b[35m== Fault phase, budget 40.0 s ==\u001b[39m\u001b[22m',
+    );
+    const footer = (status: 'completed' | 'budget-exhausted' | 'error') =>
+      phaseFooter({ type: 'phase-end', phase: 'mutation', status, spentMs: 1_000, at: 0 }, THEMED);
+    expect(footer('completed')).toContain('\u001b[32mcompleted\u001b[39m');
+    expect(footer('budget-exhausted')).toContain('\u001b[33mbudget-exhausted\u001b[39m');
+    expect(footer('error')).toContain('\u001b[31merror\u001b[39m');
   });
 
   it('prints a header when a phase starts and a footer when it ends', () => {

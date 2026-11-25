@@ -112,7 +112,7 @@ export interface Checked {
 
 export type IgnoredBy = 'baseline' | 'inline';
 
-/** A finding a baseline entry or a chimpd-ignore comment accepts; it is listed, but not counted. */
+/** A finding a baseline entry or a bruise-ignore comment accepts; it is listed, but not counted. */
 export interface IgnoredFinding {
   readonly finding: Finding;
   readonly by: IgnoredBy;
@@ -124,7 +124,7 @@ export interface BaselineReport {
   readonly file: string;
   readonly present: boolean;
   readonly entries: number;
-  /** Entries that no longer match anything in scope; `chimpd baseline --prune` removes them. */
+  /** Entries that no longer match anything in scope; `bruise baseline --prune` removes them. */
   readonly stale: readonly BaselineEntry[];
   /** Entries whose code was in scope but not checked well enough to tell whether they still match. */
   readonly notEvaluated: readonly BaselineEntry[];

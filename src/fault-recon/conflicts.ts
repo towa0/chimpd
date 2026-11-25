@@ -50,7 +50,7 @@ function currentDigests(): Record<string, string> {
  */
 export async function pristineFingerprints(targetRoot?: string): Promise<Fingerprints> {
   // Node creates its default dispatcher on the first fetch; an unknown scheme rejects before any I/O.
-  await fetch('chimpd-probe:').catch(() => undefined);
+  await fetch('bruise-probe:').catch(() => undefined);
   const environment = targetRoot === undefined ? {} : await environmentDigests(targetRoot, digest);
   return { entryPoints: currentDigests(), dispatcher: dispatcherDigest(), environment };
 }
@@ -78,10 +78,10 @@ export function patchedSince(pristine: Fingerprints): string[] {
   return patched;
 }
 
-/** Names the environments whose own HTTP entry points chimpd cannot fault, instead of calling them a patch. */
+/** Names the environments whose own HTTP entry points bruise cannot fault, instead of calling them a patch. */
 export function patchedBeforeTestsReason(patched: readonly string[], environment: string | null | undefined): string {
   if (environment === 'happy-dom') {
-    return `the happy-dom test environment replaces ${patched.join(', ')} with its own, which chimpd cannot fault yet`;
+    return `the happy-dom test environment replaces ${patched.join(', ')} with its own, which bruise cannot fault yet`;
   }
   return `HTTP entry points were already patched before the tests loaded: ${patched.join(', ')}`;
 }

@@ -192,7 +192,7 @@ const full = runResult({
     { finding: faultFinding({ kind: 'fire-and-forget' }), by: 'inline', reason: 'telemetry' },
   ],
   baseline: {
-    file: 'chimpd-baseline.json',
+    file: 'bruise-baseline.json',
     present: true,
     entries: 3,
     stale: [{ source: 'mutation', file: 'src/a.ts', mutator: 'EqualityOperator', replacement: 'a > b', statement: '0123456789abcdef', reason: null }],
@@ -286,7 +286,7 @@ describe('JSON report schema', () => {
       ['fire-and-forget', 'inline', 'telemetry'],
     ]);
     expect(report.findings).toHaveLength(2);
-    expect(report.baseline).toMatchObject({ file: 'chimpd-baseline.json', entries: 3, stale: [{ mutator: 'EqualityOperator' }] });
+    expect(report.baseline).toMatchObject({ file: 'bruise-baseline.json', entries: 3, stale: [{ mutator: 'EqualityOperator' }] });
   });
 
   it('does not count ignored findings in the exit code', () => {

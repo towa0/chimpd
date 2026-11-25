@@ -26,7 +26,7 @@ afterEach(() => {
 });
 
 function project(files: Record<string, string>): string {
-  const dir = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'chimpd-ignore-'));
+  const dir = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'bruise-ignore-'));
   dirs.push(dir);
   for (const [file, content] of Object.entries(files)) {
     fs.mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
@@ -68,7 +68,7 @@ function entry(overrides: Partial<BaselineEntry & { source: 'mutation' }> = {}):
 }
 
 function baseline(entries: readonly BaselineEntry[], prefix = ''): Baseline {
-  return { path: '/repo/chimpd-baseline.json', prefix, present: entries.length > 0, entries };
+  return { path: '/repo/bruise-baseline.json', prefix, present: entries.length > 0, entries };
 }
 
 function input(dir: string, overrides: Partial<IgnoreInput> = {}): IgnoreInput {
@@ -86,38 +86,38 @@ function input(dir: string, overrides: Partial<IgnoreInput> = {}): IgnoreInput {
 
 describe('inline ignores', () => {
   it('sets aside a finding under a comment with a reason, and keeps the reason', () => {
-    const dir = project({ 'src/a.ts': SOURCE.replace('  if (total', '  // chimpd-ignore: equivalent, 100 is never passed\n  if (total') });
+    const dir = project({ 'src/a.ts': SOURCE.replace('  if (total', '  // bruise-ignore: equivalent, 100 is never passed\n  if (total') });
     const outcome = applyIgnores(input(dir, { findings: [survivor(3)], mutationRanges: [range('src/a.ts', 1, 7)] }));
     expect(outcome.findings).toEqual([]);
     expect(outcome.ignored).toMatchObject([{ by: 'inline', reason: 'equivalent, 100 is never passed', finding: { line: 3 } }]);
   });
 
   it('covers every statement nested in the one under the comment', () => {
-    const dir = project({ 'src/a.ts': `// chimpd-ignore: legacy pricing, replaced next quarter\n${SOURCE}` });
+    const dir = project({ 'src/a.ts': `// bruise-ignore: legacy pricing, replaced next quarter\n${SOURCE}` });
     const outcome = applyIgnores(input(dir, { findings: [survivor(3)], mutationRanges: [range('src/a.ts', 1, 7)] }));
     expect(outcome.ignored.map(({ by }) => by)).toEqual(['inline']);
   });
 
   it('does not honour a comment without a reason and reports it as an error finding', () => {
-    const dir = project({ 'src/a.ts': SOURCE.replace('  if (total', '  // chimpd-ignore\n  if (total') });
+    const dir = project({ 'src/a.ts': SOURCE.replace('  if (total', '  // bruise-ignore\n  if (total') });
     const outcome = applyIgnores(input(dir, { findings: [survivor(3)], mutationRanges: [range('src/a.ts', 1, 7)] }));
     expect(outcome.ignored).toEqual([]);
     expect(outcome.findings.map(({ kind, line }) => [kind, line])).toEqual([
       ['invalid-ignore', 2],
       ['survived', 3],
     ]);
-    expect(outcome.findings[0]?.message).toContain('chimpd-ignore without a reason is not honoured');
+    expect(outcome.findings[0]?.message).toContain('bruise-ignore without a reason is not honoured');
     expect(outcome.findings[0]?.severity.score).toBeGreaterThan(0);
   });
 
   it('does not report a comment without a reason outside the scope', () => {
-    const dir = project({ 'src/a.ts': `// chimpd-ignore\nexport const other = 1;\n\n${SOURCE}` });
+    const dir = project({ 'src/a.ts': `// bruise-ignore\nexport const other = 1;\n\n${SOURCE}` });
     const outcome = applyIgnores(input(dir, { mutationRanges: [range('src/a.ts', 5, 10)] }));
     expect(outcome.findings).toEqual([]);
   });
 
   it('sets aside a fault finding under a comment above the call', () => {
-    const dir = project({ 'src/f.ts': FETCH.replace('  await fetch', '  // chimpd-ignore: telemetry, losing it is fine\n  await fetch') });
+    const dir = project({ 'src/f.ts': FETCH.replace('  await fetch', '  // bruise-ignore: telemetry, losing it is fine\n  await fetch') });
     const finding = faultFinding({ file: 'src/f.ts', line: 3, column: 9, functionName: 'load', kind: 'fire-and-forget' });
     const outcome = applyIgnores(input(dir, { findings: [finding], mutationRanges: [], faultRanges: [range('src/f.ts', 1, 4)] }));
     expect(outcome.ignored).toMatchObject([{ by: 'inline', reason: 'telemetry, losing it is fine' }]);
@@ -153,7 +153,7 @@ describe('baseline entries', () => {
   });
 
   it('count an inline ignore first when both match, and the entry is not stale', () => {
-    const commented = SOURCE.replace('  if (total', '  // chimpd-ignore: inline wins\n  if (total');
+    const commented = SOURCE.replace('  if (total', '  // bruise-ignore: inline wins\n  if (total');
     const dir = project({ 'src/a.ts': commented });
     const outcome = applyIgnores(
       input(dir, { baseline: baseline([entry({ statement: hashAt(commented, 3, 7) })]), findings: [survivor(3)], mutationRanges: [range('src/a.ts', 1, 7)] }),

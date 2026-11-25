@@ -1,7 +1,7 @@
 import type { InjectedEvent } from './inject.js';
 
 /** A body cut off mid-object; it is unique, so a parse of exactly this text is a parse of the faulted body. */
-export const MALFORMED_BODY = '{"chimpd-malformed-json":';
+export const MALFORMED_BODY = '{"bruise-malformed-json":';
 
 export function respondWithMalformedJson(event: InjectedEvent): void {
   event.controller.respondWith(new Response(MALFORMED_BODY, { status: 200, headers: { 'content-type': 'application/json' } }));

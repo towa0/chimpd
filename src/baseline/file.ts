@@ -1,9 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { FAULT_FINDING_KINDS, git, toPosix, type FaultFindingKind } from '../core/index.js';
-import { ChimpdError } from '../orchestrator/target.js';
+import { BruiseError } from '../orchestrator/target.js';
 
-export const BASELINE_FILE = 'chimpd-baseline.json';
+export const BASELINE_FILE = 'bruise-baseline.json';
 export const BASELINE_VERSION = 1;
 
 export interface MutationEntry {
@@ -36,7 +36,7 @@ export interface Baseline {
   readonly entries: readonly BaselineEntry[];
 }
 
-export class BaselineError extends ChimpdError {}
+export class BaselineError extends BruiseError {}
 
 type Json = Record<string, unknown>;
 
@@ -101,7 +101,7 @@ export function parseBaseline(content: string, name: string = BASELINE_FILE): Ba
   }
   if (!isObject(parsed)) throw new BaselineError(`${name} must hold a JSON object`);
   if (parsed.version !== BASELINE_VERSION) {
-    throw new BaselineError(`${name} has version ${JSON.stringify(parsed.version)}; this chimpd reads version ${BASELINE_VERSION}`);
+    throw new BaselineError(`${name} has version ${JSON.stringify(parsed.version)}; this version of bruise reads baseline version ${BASELINE_VERSION}`);
   }
   onlyKeys(parsed, ['version', 'entries'], name);
   if (!Array.isArray(parsed.entries)) throw new BaselineError(`${name}: "entries" must be an array`);

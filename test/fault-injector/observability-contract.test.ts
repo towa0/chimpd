@@ -11,7 +11,7 @@ import {
 } from '../../src/fault-injector/index.js';
 import { viaFetch, viaHttpGet, viaHttpRequest, viaNamedGet } from '../fixtures/call-sites/calls.js';
 
-const HOST = 'http://blackhole.chimpd.invalid';
+const HOST = 'http://blackhole.bruise.invalid';
 const earlyRequest = new Request(`${HOST}/early`, { signal: new AbortController().signal });
 const RequestBeforeInstall = Request;
 const prototypeBeforeInstall = Request.prototype;
@@ -356,8 +356,8 @@ describe('observability contract', () => {
     it.each([
       ['http.request', () => http.request(uniqueUrl())],
       ['http.get', () => http.get(uniqueUrl())],
-      ['https.request', () => https.request(uniqueUrl('https://blackhole.chimpd.invalid'))],
-      ['https.get', () => https.get(uniqueUrl('https://blackhole.chimpd.invalid'))],
+      ['https.request', () => https.request(uniqueUrl('https://blackhole.bruise.invalid'))],
+      ['https.get', () => https.get(uniqueUrl('https://blackhole.bruise.invalid'))],
     ])('hands the listener the ClientRequest returned by %s', async (_label, start) => {
       const request = start();
       request.on('error', () => undefined);
@@ -462,8 +462,8 @@ describe('observability contract', () => {
     });
 
     it('holds https requests on both paths', async () => {
-      const fetchUrl = uniqueUrl('https://blackhole.chimpd.invalid');
-      const httpsUrl = uniqueUrl('https://blackhole.chimpd.invalid');
+      const fetchUrl = uniqueUrl('https://blackhole.bruise.invalid');
+      const httpsUrl = uniqueUrl('https://blackhole.bruise.invalid');
       quietFetch(fetchUrl, { signal: AbortSignal.timeout(9000) });
       const request = https.request(httpsUrl, { timeout: 8000 });
       request.on('error', () => undefined);
