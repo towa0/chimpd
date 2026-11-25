@@ -283,6 +283,7 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
     checked: NOTHING_CHECKED,
     findings: [],
     invalid: [],
+    invalidExcluded: false,
     tally: EMPTY_TALLY,
     notTested: [],
     skipped: [],
@@ -508,7 +509,7 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
     }),
     NOTHING_CHECKED,
   );
-  const { status, statusReason } = runStatus({ phases, checked, findings, invalid, skipped, inconclusive, conflicts }, plan.scope.mode);
+  const { status, statusReason, invalidExcluded } = runStatus({ phases, checked, findings, invalid, skipped, inconclusive, conflicts }, plan.scope.mode);
   return result({
     status,
     statusReason,
@@ -517,6 +518,7 @@ export async function runChimpd(options: RunOptions): Promise<RunResult> {
     checked,
     findings,
     invalid,
+    invalidExcluded,
     tally: tallyOf(considered, faulted),
     notTested,
     skipped,
@@ -543,27 +545,36 @@ interface Outcome {
   readonly conflicts: readonly unknown[];
 }
 
-function runStatus(outcome: Outcome, mode: RunScope['mode']): { status: RunStatus; statusReason: string | null } {
+interface Status {
+  readonly status: RunStatus;
+  readonly statusReason: string | null;
+  readonly invalidExcluded: boolean;
+}
+
+function runStatus(outcome: Outcome, mode: RunScope['mode']): Status {
+  const invalidExcluded = outcome.invalid.length > 0 && outcome.checked.mutants > 0;
   const failedPhase = outcome.phases.find((phase) => phase.status === 'error');
-  if (failedPhase !== undefined) return { status: 'inconclusive', statusReason: `the ${failedPhase.name} phase failed` };
+  if (failedPhase !== undefined) return { status: 'inconclusive', statusReason: `the ${failedPhase.name} phase failed`, invalidExcluded };
   const unfinishedPhase = outcome.phases.some((phase) => phase.status !== 'completed' && phase.status !== 'not-run');
   const listedGaps = outcome.skipped.length + outcome.inconclusive.length + outcome.conflicts.length;
-  // Calls made under a conflicting test file are never faulted, and an invalid mutant got no verdict, so both are gaps.
-  const gaps = unfinishedPhase || listedGaps > 0 || outcome.invalid.length > 0;
+  // Calls made under a conflicting test file are never faulted, so they are a gap. Invalid mutants are one only
+  // when no valid mutant ran, since then the mutation phase verified nothing.
+  const gaps = unfinishedPhase || listedGaps > 0 || (outcome.invalid.length > 0 && !invalidExcluded);
   const nothingChecked = outcome.checked.mutants + outcome.checked.callSites === 0 && outcome.findings.length === 0;
   if (gaps && nothingChecked) {
     const onlyInvalid = !unfinishedPhase && listedGaps === 0;
-    return { status: 'inconclusive', statusReason: onlyInvalid ? 'no mutant in scope could run' : 'nothing in scope could be checked' };
+    const statusReason = onlyInvalid ? 'no mutant in scope could run' : 'nothing in scope could be checked';
+    return { status: 'inconclusive', statusReason, invalidExcluded };
   }
-  if (gaps) return { status: 'partial', statusReason: null };
+  if (gaps) return { status: 'partial', statusReason: null, invalidExcluded };
   if (nothingChecked) {
     const statusReason =
       mode === 'test-only'
         ? 'the source the changed tests reach produces no mutants at this level'
         : 'the changed code produces no mutants at this level and makes no outgoing calls';
-    return { status: 'nothing-checkable', statusReason };
+    return { status: 'nothing-checkable', statusReason, invalidExcluded };
   }
-  return { status: 'completed', statusReason: null };
+  return { status: 'completed', statusReason: null, invalidExcluded };
 }
 
 export const EXIT_CLEAN = 0;

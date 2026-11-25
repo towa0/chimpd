@@ -39,6 +39,13 @@ describe('terminal report', () => {
     );
   });
 
+  it('marks invalid mutants excluded in the summary when they are not a coverage gap', () => {
+    const excluded = renderFancyText(runResult({ checked: { mutants: 7, invalidMutants: 3, callSites: 3 }, invalidExcluded: true }), {}, PLAIN, 40);
+    expect(excluded).toContain('Mutants  killed 9, survived 3, invalid 3, excluded, not tested 0');
+    const gap = renderFancyText(runResult({ status: 'partial', checked: { mutants: 0, invalidMutants: 3, callSites: 3 } }), {}, PLAIN, 40);
+    expect(gap).toContain('Mutants  killed 9, survived 3, invalid 3, not tested 0');
+  });
+
   it('drops the box on a terminal too narrow for it, and keeps every line of the summary', () => {
     const text = renderFancyText(runResult(), {}, PLAIN, 40);
     expect(text).not.toContain('+---');

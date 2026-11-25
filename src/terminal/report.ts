@@ -58,7 +58,9 @@ function summaryLines(result: RunResult, palette: Palette): string[] {
     ? [
         count(tally.killed, 'killed', palette.green),
         count(tally.survived, 'survived', palette.highlight),
-        count(result.checked.invalidMutants, 'invalid', palette.yellow),
+        result.invalidExcluded
+          ? palette.dim(`invalid ${result.checked.invalidMutants}, excluded`)
+          : count(result.checked.invalidMutants, 'invalid', palette.yellow),
         `${count(notTested, 'not tested', palette.yellow)}${unplanned > 0 ? ` (+${plural(unplanned, 'file')} never planned)` : ''}`,
       ].join(', ')
     : 'not run';

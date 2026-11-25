@@ -154,7 +154,7 @@ Mutation phase:
 | `survived` (finding, base 55) | Tests ran the mutated code and still passed. |
 | `no-coverage` (finding, base 45) | No test runs the mutated code. |
 | killed or timed out | A test caught the mutant. Counted as checked. |
-| compile or runtime error | The mutant could not run. Listed as invalid with whether it failed to compile or crashed the runner, and the first error line. Not a finding, and a gap in coverage. |
+| compile or runtime error | The mutant could not run. Listed as invalid with whether it failed to compile or crashed the runner, and the first error line. Not a finding. When at least one valid mutant ran, invalid mutants are excluded from coverage rather than counted as a gap; when none did, they are a gap. |
 | not tested, ignored | Listed as skipped, with the reason. |
 
 Before any mutant runs, Stryker runs the tests related to the changed files with no mutant active. If any of them fails, no mutant is judged: the mutation phase is `inconclusive` with the reason "the target's own tests fail before any mutant runs", and its files are listed as not mutated.
@@ -228,7 +228,7 @@ The text report shows the diff scope, a coverage summary, the findings most seve
 - `findings`: every finding that counts, with its severity and its mutation or fault detail; a mutation finding carries the `statement` hash a baseline entry would use
 - `ignored`: every finding the baseline or an inline comment set aside, with `ignoredBy` (`baseline` or `inline`) and `ignoreReason`
 - `baseline`: whether `chimpd-baseline.json` exists, its number of entries, and its `stale` and `notEvaluated` entries; `null` when the run stopped before reading it
-- `coverage`: `checked` counts, plus `invalid`, `skipped`, `inconclusive` and `conflicts`, each item with its reason, and `notTested`: per file, the mutants that were generated but not tested before the budget ran out (`mutants` is `null` for a file whose mutants were never planned); each of those mutants is also in `skipped`
+- `coverage`: `checked` counts, plus `invalid`, `invalidExcluded` (`true` when at least one valid mutant ran, so the invalid mutants are listed but do not make the run `partial`), `skipped`, `inconclusive` and `conflicts`, each item with its reason, and `notTested`: per file, the mutants that were generated but not tested before the budget ran out (`mutants` is `null` for a file whose mutants were never planned); each of those mutants is also in `skipped`
 
 Every duration is in whole milliseconds. Nothing in scope is dropped silently: whatever was not checked appears under `coverage` and in the text report.
 
@@ -238,7 +238,7 @@ When stdout or stderr is not a terminal, as in CI logs, pipes and redirects, chi
 
 - a banner on stderr: a small banana with the name and version. It is left out with `--json`, `--no-banner`, when `CI` is set and when `NO_COLOR` is set.
 - live progress on stderr while a run works, redrawn in place on one line: a header per phase with its budget, a spinner, a bar of mutants tested out of the total or faulted runs out of the planned ones, the time spent against the phase budget, and the file being worked on. Before the first result it says what it waits for, such as Stryker's start and dry run. On a narrow terminal it drops the file, then the bar, then the time, so the line never wraps; it redraws on resize. The cursor is hidden while it runs and shown again when the run ends, fails, is interrupted with Ctrl-C or is terminated. `--verbose` turns the progress off, because the project's own test output would land in the middle of the line.
-- in the report on stdout: bold section headers; each finding on a line of its own that starts with `path:line:col`, which many terminals make clickable, with its reason indented under it; severity in colour, high red, medium yellow, low dim; and, at the end, a summary box with mutants killed, survived, invalid and not tested, the handled, finding and inconclusive results of each fault kind, and the time spent against the budget, followed by the Result line with its exit code. The box is left out on a terminal too narrow for it.
+- in the report on stdout: bold section headers; each finding on a line of its own that starts with `path:line:col`, which many terminals make clickable, with its reason indented under it; severity in colour, high red, medium yellow, low dim; and, at the end, a summary box with mutants killed, survived, invalid (followed by `excluded` when they are not a gap) and not tested, the handled, finding and inconclusive results of each fault kind, and the time spent against the budget, followed by the Result line with its exit code. The box is left out on a terminal too narrow for it.
 
 Colour: `--color` colours the report even when stdout is not a terminal, and then uses the terminal layout; `--no-color` turns colour off, and the two cannot be combined. Without either flag, `FORCE_COLOR` (any value but `0` or `false`) forces colour, `NO_COLOR` or `TERM=dumb` turns it off, and otherwise only a terminal gets colour. The terminal layout without colour, under `NO_COLOR` for example, is the same text. `--json` output never changes.
 
@@ -246,14 +246,14 @@ Colour: `--color` colours the report even when stdout is not a terminal, and the
 
 | Status | Meaning | Exit code |
 | --- | --- | --- |
-| `completed` | Everything in scope was checked. The only status the text report calls clean. | 0, or 1 with findings |
+| `completed` | Everything in scope was checked, apart from invalid mutants excluded because at least one valid mutant ran. The only status the text report calls clean. The Result line then says "coverage complete" and notes the excluded invalid mutants, as in "3 invalid mutants excluded". | 0, or 1 with findings |
 | `partial` | Something in scope was not checked, but the run checked something else. The report lists every gap. | 0 or 1 by findings; 2 with `--strict` |
 | `inconclusive` | A phase failed, or nothing in scope could be checked, for example when every mutant was invalid ("no mutant in scope could run"). | 2 |
 | `nothing-checkable` | Source was in scope, but the change produces no mutant at this level and makes no outgoing call, as with a change to types or comments. | 0; 2 with `--strict` |
 | `nothing-in-scope` | The branch changed no TypeScript source or test file. | 0 |
 | `error` | The run could not be carried out: not a git repository, missing base ref, no Vitest config, an unsupported Vitest, bad arguments. | 2 |
 
-Gaps that make a run partial include call sites over the preset cap, a budget that ran out after some results, a test file that replaces `fetch`, a call site with no verdict, an invalid mutant, and a changed call that no test reaches.
+Gaps that make a run partial include call sites over the preset cap, a budget that ran out after some results, a test file that replaces `fetch`, a call site with no verdict, invalid mutants when no valid mutant ran, and a changed call that no test reaches. Invalid mutants alongside at least one valid mutant are not a gap: they are still listed with their reason, and the summary counts them as excluded.
 
 ## Exit codes
 

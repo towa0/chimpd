@@ -130,6 +130,15 @@ describe('text report', () => {
     );
   });
 
+  it('says excluded invalid mutants are not a gap, and notes them in the Result line of a completed run', () => {
+    const invalid = [{ source: 'mutation' as const, file: 'src/a.ts', line: 2, reason: 'compile error: src/a.ts(2,7): error TS2322: nope' }];
+    const result = runResult({ checked: { mutants: 7, invalidMutants: 3, callSites: 0 }, invalid: [...invalid, ...invalid, ...invalid], invalidExcluded: true });
+    const text = renderText(result);
+    expect(text).toContain('  3 invalid mutants failed to compile or crashed the runner; excluded from coverage, each is listed below');
+    expect(text).not.toContain('NOT CHECKED');
+    expect(text).toContain('Result: 2 findings, coverage complete, 3 invalid mutants excluded (exit 1)');
+  });
+
   it('shows a phase that ran out of budget or did not run, with its reason', () => {
     const text = renderText(
       runResult({

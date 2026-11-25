@@ -95,7 +95,7 @@ export interface GitInfo {
 }
 
 /**
- * completed: everything in scope was checked. partial: something in scope was not checked, but the
+ * completed: everything in scope was checked, invalid mutants aside once a valid mutant ran. partial: something in scope was not checked, but the
  * run still checked something. inconclusive: a phase failed, or nothing in scope could be checked.
  * nothing-checkable: source was in scope, but it produced no mutant and makes no outgoing call.
  */
@@ -174,6 +174,8 @@ export interface RunResult {
   readonly findings: readonly Finding[];
   /** Mutants that could not run, each with whether it failed to compile or crashed, and the first error line. */
   readonly invalid: readonly Item[];
+  /** True when at least one valid mutant ran, so the invalid ones are listed but are not a gap in coverage. */
+  readonly invalidExcluded: boolean;
   readonly tally: Tally;
   /** Per file, the mutants the budget left untested; each mutant is also listed in `skipped`. */
   readonly notTested: readonly NotTestedFile[];

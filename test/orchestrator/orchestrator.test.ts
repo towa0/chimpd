@@ -285,7 +285,7 @@ describe('budget exhaustion', () => {
     );
   });
 
-  it('counts invalid mutants in the Result line of a partial run', async () => {
+  it('notes excluded invalid mutants in the Result line of a partial run without counting them as a gap', async () => {
     const repo = changedRepo();
     const invalid = mutant({ status: 'CompileError', statusReason: 'src/a.ts(2,3): error TS2322: nope' });
     const untested = mutant({ start: { line: 2, column: 9 }, status: 'NotTested', statusReason: 'not tested: budget' });
@@ -300,7 +300,9 @@ describe('budget exhaustion', () => {
         ),
     });
     const result = await runChimpd(run.options());
-    expect(renderText(result)).toContain('Result: 0 findings, coverage partial: 1 not checked, 1 invalid, listed above (exit 0; 2 with --strict)');
+    expect(renderText(result)).toContain(
+      'Result: 0 findings, coverage partial: 1 not checked, listed above; 1 invalid mutant excluded (exit 0; 2 with --strict)',
+    );
   });
 
   it('lists every file the fault phase never got to when mutation spent the whole budget', async () => {
@@ -738,14 +740,42 @@ describe('verdict honesty', () => {
     expect(exits(result)).toEqual([2, 2]);
   });
 
-  it('counts invalid mutants as a gap: partial when something else was checked', async () => {
+  it('excludes invalid mutants from coverage once a valid mutant ran: completed, exit 0 even with --strict', async () => {
     const repo = changedRepo();
     const run = harness(repo, {
-      runMutation: () => Promise.resolve(mutationResult({ mutants: [killed, compileError(3)] })),
+      runMutation: () => Promise.resolve(mutationResult({ mutants: [killed, compileError(2), compileError(3), compileError(4)] })),
     });
     const result = await runChimpd(run.options());
-    expect(result.status).toBe('partial');
+    expect(result).toMatchObject({ status: 'completed', statusReason: null, invalidExcluded: true });
+    expect(result.checked).toEqual({ mutants: 1, invalidMutants: 3, callSites: 0 });
+    expect(result.invalid.map((item) => [item.line, item.reason])).toEqual([
+      [2, "compile error: src/a.ts(2,7): error TS2339: Property 'x' does not exist."],
+      [3, "compile error: src/a.ts(2,7): error TS2339: Property 'x' does not exist."],
+      [4, "compile error: src/a.ts(2,7): error TS2339: Property 'x' does not exist."],
+    ]);
+    expect(exits(result)).toEqual([0, 0]);
+    const text = renderText(result);
+    expect(text).toContain('Invalid mutants (3):');
+    expect(text).toContain('Result: clean, coverage complete, 3 invalid mutants excluded (exit 0)');
+  });
+
+  it('keeps invalid mutants a gap when no valid mutant ran but a call site was checked', async () => {
+    const repo = changedRepo();
+    const run = harness(repo, {
+      runMutation: () => Promise.resolve(mutationResult({ mutants: [compileError(2)] })),
+      runFaults: () => Promise.resolve(faultRun({ results: [siteResult()] })),
+    });
+    const result = await runChimpd(run.options());
+    expect(result).toMatchObject({ status: 'partial', invalidExcluded: false });
     expect(exits(result)).toEqual([0, 2]);
+    expect(renderText(result)).toContain('coverage partial: 1 invalid, listed above');
+  });
+
+  it('does not exclude anything when every mutant in scope was invalid', async () => {
+    const repo = changedRepo();
+    const run = harness(repo, { runMutation: () => Promise.resolve(mutationResult({ mutants: [compileError(2)] })) });
+    const result = await runChimpd(run.options());
+    expect(result).toMatchObject({ status: 'inconclusive', invalidExcluded: false });
   });
 
   it('is nothing-checkable, exit 0 and 2 with --strict, when the change has no mutants and no outgoing calls', async () => {

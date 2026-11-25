@@ -125,6 +125,8 @@ export interface JsonCoverage {
   readonly checked: { readonly mutants: number; readonly invalidMutants: number; readonly callSites: number };
   /** Mutants that could not run, each with "compile error: " or "runtime error: " and the first error line. */
   readonly invalid: readonly JsonItem[];
+  /** True when at least one valid mutant ran, so the invalid mutants are listed but are not a gap and do not make the run partial. */
+  readonly invalidExcluded: boolean;
   /** Per file, mutants generated but never tested before the budget ran out; mutants is null for a file never planned. */
   readonly notTested: readonly { readonly file: string; readonly mutants: number | null }[];
   readonly skipped: readonly JsonItem[];
@@ -270,6 +272,7 @@ export function toJsonReport(result: RunResult, options: ExitOptions = {}): Json
     coverage: {
       checked: { mutants: checked.mutants, invalidMutants: checked.invalidMutants, callSites: checked.callSites },
       invalid: result.invalid.map(item),
+      invalidExcluded: result.invalidExcluded,
       notTested: result.notTested.map(({ file, mutants }) => ({ file, mutants })),
       skipped: result.skipped.map(item),
       inconclusive: result.inconclusive.map(item),

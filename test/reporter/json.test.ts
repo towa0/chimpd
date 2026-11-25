@@ -123,6 +123,7 @@ const SCHEMA_V1: Shape = fields({
   coverage: fields({
     checked: fields({ mutants: 'number', invalidMutants: 'number', callSites: 'number' }),
     invalid: list(ITEM),
+    invalidExcluded: 'boolean',
     notTested: list(fields({ file: 'string', mutants: nullable('number') })),
     skipped: list(ITEM),
     inconclusive: list(ITEM),
@@ -247,11 +248,18 @@ describe('JSON report schema', () => {
     expect(toJsonReport(full).coverage).toEqual({
       checked: { mutants: 12, invalidMutants: 0, callSites: 3 },
       invalid: [{ source: 'mutation', file: 'src/a.ts', line: 6, reason: 'compile error: src/a.ts(6,3): error TS2322: Type mismatch.', faultKind: null }],
+      invalidExcluded: false,
       notTested: [{ file: 'src/a.ts', mutants: null }, { file: 'src/b.ts', mutants: 2 }],
       skipped: [{ source: 'mutation', file: 'src/a.ts', line: null, reason: 'mutants never planned: the budget ran out first', faultKind: null }],
       inconclusive: [{ source: 'fault', file: 'src/a.ts', line: 9, reason: 'the test did not reach the call site under the fault', faultKind: 'connection-refused' }],
       conflicts: [{ testFile: 'test/n.test.ts', patched: ['fetch'] }],
     });
+  });
+
+  it('says whether the invalid mutants were excluded from coverage', () => {
+    const excluded = runResult({ status: 'completed', checked: { mutants: 7, invalidMutants: 3, callSites: 0 }, invalid: full.invalid, invalidExcluded: true });
+    expect(toJsonReport(excluded)).toMatchObject({ status: 'completed', exitCode: 1, coverage: { invalidExcluded: true } });
+    expect(toJsonReport(excluded, { strict: true }).exitCode).toBe(1);
   });
 
   it('keeps every finding, in ranked order, with its detail', () => {

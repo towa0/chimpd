@@ -36,7 +36,7 @@ function notChecked(result: RunResult): number {
 function partialGaps(result: RunResult): string {
   const counted = [
     notChecked(result) > 0 ? `${notChecked(result)} not checked` : null,
-    result.invalid.length > 0 ? `${result.invalid.length} invalid` : null,
+    result.invalid.length > 0 && !result.invalidExcluded ? `${result.invalid.length} invalid` : null,
   ].filter((gap) => gap !== null);
   if (counted.length > 0) return `${counted.join(', ')}, listed above`;
   const unfinished = result.phases.filter((phase) => phase.status !== 'completed' && phase.status !== 'not-run');
@@ -56,6 +56,10 @@ function notTestedLine(result: RunResult): string | null {
   return `${INDENT}NOT CHECKED: ${what.join(' and ')} before the budget ran out: ${files.join(', ')}`;
 }
 
+function excludedNote(result: RunResult): string | null {
+  return result.invalidExcluded ? `${plural(result.invalid.length, 'invalid mutant')} excluded` : null;
+}
+
 export function verdictLine(result: RunResult, options: ExitOptions): string {
   const code = exitCodeOf(result, options);
   if (result.status === 'error') return `Result: tool error (exit ${code})`;
@@ -72,7 +76,14 @@ export function verdictLine(result: RunResult, options: ExitOptions): string {
   }
   if (result.status === 'partial') {
     const strict = options.strict === true ? ', --strict' : '; 2 with --strict';
-    return `Result: ${findings}, coverage partial: ${partialGaps(result)} (exit ${code}${strict})`;
+    const excluded = excludedNote(result);
+    return `Result: ${findings}, coverage partial: ${partialGaps(result)}${excluded === null ? '' : `; ${excluded}`} (exit ${code}${strict})`;
+  }
+  const excluded = excludedNote(result);
+  if (result.status === 'completed' && excluded !== null) {
+    if (result.findings.length > 0) return `Result: ${findings}, coverage complete, ${excluded} (exit ${code})`;
+    const alsoIgnored = ignored > 0 ? `; ${plural(ignored, 'finding')} ignored` : '';
+    return `Result: clean, coverage complete, ${excluded}${alsoIgnored} (exit ${code})`;
   }
   if (result.findings.length > 0) return `Result: ${findings} (exit ${code})`;
   const alsoIgnored = ignored > 0 ? `; ${plural(ignored, 'finding')} ignored` : '';
@@ -114,7 +125,10 @@ function coverageSection(result: RunResult): string[] {
   if (result.status === 'error' || result.status === 'nothing-in-scope') return [];
   const { mutants, invalidMutants, callSites } = result.checked;
   const lines = [`Coverage: ${plural(mutants, 'mutant')} and ${plural(callSites, 'call site')} checked`];
-  if (invalidMutants > 0) lines.push(`${INDENT}${plural(invalidMutants, 'invalid mutant')} failed to compile or crashed the runner; each is listed below`);
+  if (invalidMutants > 0) {
+    const excluded = result.invalidExcluded ? 'excluded from coverage, ' : '';
+    lines.push(`${INDENT}${plural(invalidMutants, 'invalid mutant')} failed to compile or crashed the runner; ${excluded}each is listed below`);
+  }
   const gaps = [
     result.skipped.length > 0 ? `${result.skipped.length} skipped` : null,
     result.inconclusive.length > 0 ? `${result.inconclusive.length} inconclusive` : null,

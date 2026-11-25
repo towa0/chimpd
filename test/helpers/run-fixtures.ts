@@ -179,6 +179,7 @@ export function runResult(overrides: Partial<RunResult> = {}): RunResult {
     checked: { mutants: 12, invalidMutants: 0, callSites: 3 },
     findings: [faultFinding(), mutationFinding()],
     invalid: [],
+    invalidExcluded: false,
     tally: { killed: 9, survived: 3, faults: [{ kind: 'blackhole', handled: 2, findings: 1, inconclusive: 0 }] },
     notTested: [],
     skipped: [],
