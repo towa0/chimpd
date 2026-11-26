@@ -1,5 +1,5 @@
 import type { BaselineEntry } from '../baseline/file.js';
-import type { FaultKind, FaultVerdictKind, Intensity, MutantStatus } from '../core/index.js';
+import type { FaultFindingKind, FaultKind, FaultVerdictKind, Intensity, MutantStatus } from '../core/index.js';
 import type { IgnoredFile, ScopeNote } from '../diff-scoper/index.js';
 import type { FileConflict } from '../fault-run/index.js';
 import type { FindingKind, Severity } from '../severity/index.js';
@@ -62,6 +62,27 @@ export interface Finding {
   readonly severity: Severity;
   readonly mutation: MutationDetail | null;
   readonly fault: FaultDetail | null;
+}
+
+/**
+ * A call site and fault kind that got a verdict. handled: the fault did not escape, which says nothing
+ * of whether the fallback the code chose is right; finding: the verdict is a finding, ignored or not.
+ */
+export interface FaultSite {
+  readonly file: string;
+  readonly line: number;
+  readonly column: number;
+  readonly functionName: string | null;
+  readonly faultKind: FaultKind;
+  readonly verdict: FaultVerdictKind;
+  readonly outcome: 'handled' | 'finding';
+  readonly findingKind: FaultFindingKind | null;
+  readonly reason: string;
+  /** The evidence in a few words, such as "threw at src/a.ts:31" or "test failed its own check". */
+  readonly summary: string;
+  readonly path: 'fetch' | 'http';
+  readonly tests: readonly string[];
+  readonly reachedFrom: readonly string[];
 }
 
 /** Something in scope that produced no verdict, with the reason. */
@@ -182,6 +203,8 @@ export interface RunResult {
   readonly skipped: readonly Item[];
   readonly inconclusive: readonly Item[];
   readonly conflicts: readonly FileConflict[];
+  /** Every faulted call site and kind that got a verdict, handled or a finding, by location. */
+  readonly faultSites: readonly FaultSite[];
   /** Findings set aside by the baseline or an inline comment; not in `findings` and not in the exit code. */
   readonly ignored: readonly IgnoredFinding[];
   /** null when the run stopped before the baseline was read. */

@@ -14,6 +14,9 @@ export interface ReportOptions extends ExitOptions {
   readonly allFindings?: boolean;
 }
 
+/** How many handled fault sites the text report lists unless asked for all of them. */
+export const HANDLED_SHOWN = 10;
+
 export function findingsShown(options: ReportOptions): number {
   return options.allFindings === true ? Number.POSITIVE_INFINITY : FINDINGS_SHOWN;
 }
@@ -202,6 +205,39 @@ function findingsSection(result: RunResult, shown: number): string[] {
   return lines;
 }
 
+/** One handled site as its location, then "kind: verdict, evidence"; the verdict is kept apart for the terminal to colour. */
+export interface HandledLine {
+  readonly lead: string;
+  readonly verdict: string;
+  readonly tail: string;
+}
+
+export function handledLines(result: RunResult, options: ReportOptions): { title: string; lines: HandledLine[]; overflow: string | null } | null {
+  const handled = result.faultSites.filter((entry) => entry.outcome === 'handled');
+  if (handled.length === 0) return null;
+  const shown = options.allFindings === true ? handled : handled.slice(0, HANDLED_SHOWN);
+  const hidden = handled.length - shown.length;
+  return {
+    title: `Handled (${handled.length}):`,
+    lines: shown.map((entry) => {
+      const name = entry.functionName === null ? '' : ` in ${entry.functionName}`;
+      return {
+        lead: `${INDENT}${location(entry.file, entry.line, entry.column)}${name}, ${entry.faultKind}: `,
+        verdict: entry.verdict,
+        tail: `, ${entry.summary}`,
+      };
+    }),
+    overflow: hidden > 0 ? `${INDENT}${plural(hidden, 'more handled site')} not shown; --all-findings or --json lists every site` : null,
+  };
+}
+
+function handledSection(result: RunResult, options: ReportOptions): string[] {
+  const section = handledLines(result, options);
+  if (section === null) return [];
+  const lines = section.lines.map(({ lead, verdict, tail }) => `${lead}${verdict}${tail}`);
+  return [section.title, ...lines, ...(section.overflow === null ? [] : [section.overflow])];
+}
+
 function ignoredSection(result: RunResult): string[] {
   if (result.ignored.length === 0) return [];
   const byBaseline = result.ignored.filter((entry) => entry.by === 'baseline').length;
@@ -307,6 +343,7 @@ export type SectionName =
   | 'ignored'
   | 'baseline'
   | 'skipped'
+  | 'handled'
   | 'invalid'
   | 'inconclusive'
   | 'conflicts'
@@ -329,6 +366,7 @@ export function textSections(result: RunResult, options: ReportOptions = {}): Te
     { name: 'ignored', lines: ignoredSection(result) },
     { name: 'baseline', lines: baselineSection(result) },
     { name: 'skipped', lines: groupedSection('Skipped', result.skipped, (entry) => `${sourceOf(entry)}: ${entry.reason}`) },
+    { name: 'handled', lines: handledSection(result, options) },
     { name: 'invalid', lines: groupedSection('Invalid mutants', result.invalid, (entry) => entry.reason) },
     { name: 'inconclusive', lines: inconclusiveSection(result.inconclusive) },
     { name: 'conflicts', lines: conflictSection(result) },

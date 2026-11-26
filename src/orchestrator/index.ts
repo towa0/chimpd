@@ -32,7 +32,7 @@ import {
   type BoundaryOptions,
 } from '../test-only-scoper/index.js';
 import { mutationBudgetMs } from './budget.js';
-import { faultItems, mutationItems, notTestedFiles, NOTHING_CHECKED, SUITE_FAILS, tallyOf, type PhaseItems } from './findings.js';
+import { faultItems, faultSitesOf, mutationItems, notTestedFiles, NOTHING_CHECKED, SUITE_FAILS, tallyOf, type PhaseItems } from './findings.js';
 import {
   BruiseError,
   findVitestConfig,
@@ -289,6 +289,7 @@ export async function runBruise(options: RunOptions): Promise<RunResult> {
     skipped: [],
     inconclusive: [],
     conflicts: [],
+    faultSites: [],
     ignored: [],
     baseline: null,
     ...partial,
@@ -524,6 +525,7 @@ export async function runBruise(options: RunOptions): Promise<RunResult> {
     skipped,
     inconclusive,
     conflicts,
+    faultSites: faultSitesOf(faulted),
     ignored: ignores.ignored.toSorted((a, b) => bySeverity(a.finding, b.finding)),
     baseline: {
       file: BASELINE_FILE,

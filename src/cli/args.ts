@@ -52,7 +52,7 @@ export const USAGE = [
   '  --base <ref>    the ref the branch is compared against; default origin/main',
   '  --json          run only: print the versioned JSON report instead of text',
   '  --strict        run only: exit 2 whenever anything in scope was not checked',
-  '  --all-findings  run only: list every finding in the text report, not only the first 20',
+  '  --all-findings  run only: list every finding and handled fault site in the text report, not only the first 20 and 10',
   "  --verbose       pass on what the project's own tests print, to stderr",
   '  --seed <n>      breaks ties when a cap or the budget forces a choice; picked and printed when omitted',
   '  --cwd <dir>     the project to check; default the current directory',

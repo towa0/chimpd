@@ -132,6 +132,26 @@ export interface JsonCoverage {
   readonly skipped: readonly JsonItem[];
   readonly inconclusive: readonly JsonItem[];
   readonly conflicts: readonly { readonly testFile: string; readonly patched: readonly string[] }[];
+  /** Every faulted call site and kind that got a verdict, handled or a finding, by location. */
+  readonly faultSites: readonly JsonFaultSite[];
+}
+
+export interface JsonFaultSite {
+  readonly file: string;
+  readonly line: number;
+  readonly column: number;
+  readonly functionName: string | null;
+  readonly faultKind: FaultKind;
+  readonly verdict: string;
+  /** handled: the fault did not escape, which does not judge the fallback; finding: the verdict is a finding, ignored or not. */
+  readonly outcome: 'handled' | 'finding';
+  readonly findingKind: string | null;
+  readonly reason: string;
+  /** The evidence in a few words, such as "threw at src/a.ts:31". */
+  readonly summary: string;
+  readonly path: 'fetch' | 'http';
+  readonly tests: readonly string[];
+  readonly reachedFrom: readonly string[];
 }
 
 export interface JsonReport {
@@ -277,6 +297,21 @@ export function toJsonReport(result: RunResult, options: ExitOptions = {}): Json
       skipped: result.skipped.map(item),
       inconclusive: result.inconclusive.map(item),
       conflicts: result.conflicts.map(({ testFile, patched }) => ({ testFile, patched: [...patched] })),
+      faultSites: result.faultSites.map((entry) => ({
+        file: entry.file,
+        line: entry.line,
+        column: entry.column,
+        functionName: entry.functionName,
+        faultKind: entry.faultKind,
+        verdict: entry.verdict,
+        outcome: entry.outcome,
+        findingKind: entry.findingKind,
+        reason: entry.reason,
+        summary: entry.summary,
+        path: entry.path,
+        tests: [...entry.tests],
+        reachedFrom: [...entry.reachedFrom],
+      })),
     },
   };
 }

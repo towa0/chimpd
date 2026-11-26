@@ -1,6 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import { renderText } from '../../src/reporter/index.js';
-import { faultFinding, mutationFinding, runResult } from '../helpers/run-fixtures.js';
+import { faultFinding, faultSite, mutationFinding, runResult } from '../helpers/run-fixtures.js';
+
+const handledSites = [
+  faultSite(),
+  faultSite({
+    file: 'src/clients/inventory.ts',
+    line: 7,
+    column: 28,
+    functionName: 'checkStock',
+    faultKind: 'connection-refused',
+    verdict: 'refusal-handled',
+    summary: 'test failed its own check',
+  }),
+  faultSite({ file: 'src/a.ts', line: 3, column: 9, functionName: null, faultKind: 'blackhole', verdict: 'handled-timeout', summary: 'timeout fired, test passed' }),
+];
 
 const PRINTABLE = /^[\n\x20-\x7e]*$/;
 
@@ -52,6 +66,46 @@ describe('text report', () => {
     expect(own).not.toContain('reached from changed code');
     const wrapper = renderText(runResult({ findings: [faultFinding({ fault: { ...fault, reachedFrom: ['src/checkout.ts checkout'] } })] }));
     expect(wrapper).toContain('    reached from changed code: src/checkout.ts checkout');
+  });
+
+  it('lists each handled site with its fault kind, verdict and evidence, between Skipped and Invalid mutants', () => {
+    const finding = faultSite({ outcome: 'finding', verdict: 'status-ignored', findingKind: 'error-status-ignored', summary: 'body read before the status' });
+    const text = renderText(
+      runResult({
+        status: 'partial',
+        faultSites: [finding, ...handledSites],
+        skipped: [{ source: 'mutation', file: 'src/b.ts', line: 4, reason: 'not tested: budget' }],
+        invalid: [{ source: 'mutation', file: 'src/a.ts', line: 2, reason: 'runtime error: TypeError: boom' }],
+      }),
+    );
+    expect(text).toContain(
+      [
+        'Handled (3):',
+        '  src/clients/profile.ts:7:26 in fetchProfile, http-500: status-checked, threw at src/clients/profile.ts:9',
+        '  src/clients/inventory.ts:7:28 in checkStock, connection-refused: refusal-handled, test failed its own check',
+        '  src/a.ts:3:9, blackhole: handled-timeout, timeout fired, test passed',
+      ].join('\n'),
+    );
+    expect(text).not.toContain('status-ignored, body read');
+    expect(text.indexOf('Skipped (1):')).toBeLessThan(text.indexOf('Handled (3):'));
+    expect(text.indexOf('Handled (3):')).toBeLessThan(text.indexOf('Invalid mutants (1):'));
+    expect(text).toMatch(/^[\n\x20-\x7e]*$/);
+  });
+
+  it('leaves the Handled section out when no site was handled', () => {
+    expect(renderText(runResult())).not.toContain('Handled');
+  });
+
+  it('shows up to 10 handled sites, and every one with allFindings', () => {
+    const faultSites = Array.from({ length: 12 }, (_, index) => faultSite({ line: index + 1 }));
+    const capped = renderText(runResult({ faultSites }));
+    expect(capped).toContain('Handled (12):');
+    expect(capped).toContain('  src/clients/profile.ts:10:26 in fetchProfile');
+    expect(capped).not.toContain('src/clients/profile.ts:11:26');
+    expect(capped).toContain('  2 more handled sites not shown; --all-findings or --json lists every site');
+    const all = renderText(runResult({ faultSites }), { allFindings: true });
+    expect(all).toContain('  src/clients/profile.ts:12:26 in fetchProfile');
+    expect(all).not.toContain('more handled');
   });
 
   it('lists every finding with allFindings', () => {

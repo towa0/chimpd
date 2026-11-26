@@ -49,6 +49,12 @@ it(
       ['fire-and-forget', 'blackhole', 'src/telemetry.ts', 'trackEvent'],
     ]);
     for (const finding of faults) expect(finding.fault?.reachedFrom).toEqual([`${finding.file} ${finding.functionName}`]);
+    const handled = result.faultSites.filter((entry) => entry.outcome === 'handled' && entry.faultKind === 'http-500');
+    expect(handled.map((entry) => [entry.functionName, entry.verdict, entry.summary])).toEqual([
+      ['postLedgerEntry', 'status-checked', 'test failed its own check'],
+      ['fetchProfile', 'status-checked', `threw at src/clients/profile.ts:${app.lineOf('src/clients/profile.ts', 'throw new Error(')}`],
+      ['trackEvent', 'response-unused', 'test passed'],
+    ]);
     expect(result.conflicts).toEqual([{ testFile: 'test/notifications.test.ts', patched: ['fetch'] }]);
     expect(result.status).toBe('partial');
     expect(exitCodeOf(result)).toBe(1);

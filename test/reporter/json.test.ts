@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { exitCodeOf, type RunResult } from '../../src/orchestrator/index.js';
 import { renderJson, SCHEMA_VERSION, toJsonReport } from '../../src/reporter/index.js';
 import { severityOf } from '../../src/severity/index.js';
-import { faultFinding, mutationFinding, runResult } from '../helpers/run-fixtures.js';
+import { faultFinding, faultSite, mutationFinding, runResult } from '../helpers/run-fixtures.js';
 
 type Shape =
   | 'string'
@@ -35,7 +35,6 @@ const FINDING_FIELDS: Readonly<Record<string, Shape>> = {
     'no-coverage',
     'hang-no-timeout',
     'abort-mishandled',
-    'timeout-exceeds-budget',
     'fire-and-forget',
     'invalid-ignore',
     'refusal-mishandled',
@@ -128,6 +127,23 @@ const SCHEMA_V1: Shape = fields({
     skipped: list(ITEM),
     inconclusive: list(ITEM),
     conflicts: list(fields({ testFile: 'string', patched: list('string') })),
+    faultSites: list(
+      fields({
+        file: 'string',
+        line: 'number',
+        column: 'number',
+        functionName: nullable('string'),
+        faultKind: oneOf('blackhole', 'http-500', 'malformed-json', 'connection-refused'),
+        verdict: 'string',
+        outcome: oneOf('handled', 'finding'),
+        findingKind: nullable('string'),
+        reason: 'string',
+        summary: 'string',
+        path: oneOf('fetch', 'http'),
+        tests: list('string'),
+        reachedFrom: list('string'),
+      }),
+    ),
   }),
 });
 
@@ -186,6 +202,24 @@ const full = runResult({
   notTested: [{ file: 'src/a.ts', mutants: null }, { file: 'src/b.ts', mutants: 2 }],
   inconclusive: [{ source: 'fault', file: 'src/a.ts', line: 9, reason: 'the test did not reach the call site under the fault', faultKind: 'connection-refused' }],
   conflicts: [{ testFile: 'test/n.test.ts', patched: ['fetch'] }],
+  faultSites: [
+    faultSite(),
+    faultSite({
+      file: 'src/clients/ledger.ts',
+      line: 12,
+      column: 20,
+      functionName: 'postLedgerEntry',
+      faultKind: 'blackhole',
+      verdict: 'hang',
+      outcome: 'finding',
+      findingKind: 'hang-no-timeout',
+      reason: 'the call has no timeout of its own and relies on runtime transport defaults',
+      summary: 'no timeout of its own',
+      path: 'http',
+      tests: ['test/ledger.test.ts > posts a ledger entry'],
+      reachedFrom: ['src/clients/ledger.ts postLedgerEntry'],
+    }),
+  ],
   invalid: [{ source: 'mutation', file: 'src/a.ts', line: 6, reason: 'compile error: src/a.ts(6,3): error TS2322: Type mismatch.' }],
   ignored: [
     { finding: mutationFinding({ line: 9 }), by: 'baseline', reason: 'equivalent' },
@@ -253,6 +287,39 @@ describe('JSON report schema', () => {
       skipped: [{ source: 'mutation', file: 'src/a.ts', line: null, reason: 'mutants never planned: the budget ran out first', faultKind: null }],
       inconclusive: [{ source: 'fault', file: 'src/a.ts', line: 9, reason: 'the test did not reach the call site under the fault', faultKind: 'connection-refused' }],
       conflicts: [{ testFile: 'test/n.test.ts', patched: ['fetch'] }],
+      faultSites: [
+        {
+          file: 'src/clients/profile.ts',
+          line: 7,
+          column: 26,
+          functionName: 'fetchProfile',
+          faultKind: 'http-500',
+          verdict: 'status-checked',
+          outcome: 'handled',
+          findingKind: null,
+          reason:
+            'the code checked the status of the 500 response; the code raised its own error at src/clients/profile.ts:9: Error: profile request failed with 500',
+          summary: 'threw at src/clients/profile.ts:9',
+          path: 'fetch',
+          tests: ['test/profile.test.ts > loads a profile'],
+          reachedFrom: ['src/clients/profile.ts fetchProfile'],
+        },
+        {
+          file: 'src/clients/ledger.ts',
+          line: 12,
+          column: 20,
+          functionName: 'postLedgerEntry',
+          faultKind: 'blackhole',
+          verdict: 'hang',
+          outcome: 'finding',
+          findingKind: 'hang-no-timeout',
+          reason: 'the call has no timeout of its own and relies on runtime transport defaults',
+          summary: 'no timeout of its own',
+          path: 'http',
+          tests: ['test/ledger.test.ts > posts a ledger entry'],
+          reachedFrom: ['src/clients/ledger.ts postLedgerEntry'],
+        },
+      ],
     });
   });
 

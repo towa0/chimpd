@@ -4,7 +4,7 @@ import { stripAnsi } from '../../src/terminal/color.js';
 import { PLAIN, THEMED } from '../../src/terminal/theme.js';
 import { renderFancyText } from '../../src/terminal/report.js';
 import { severityOf } from '../../src/severity/index.js';
-import { faultFinding, mutationFinding, runResult } from '../helpers/run-fixtures.js';
+import { faultFinding, faultSite, mutationFinding, runResult } from '../helpers/run-fixtures.js';
 
 const ASCII = /^[\n\x20-\x7e]*$/;
 
@@ -21,6 +21,16 @@ describe('terminal report', () => {
         '    survived: EqualityOperator mutant survived every test that covers it: orderTotal > 120',
       ].join('\n'),
     );
+  });
+
+  it('dims each handled site as secondary text, with its verdict in green', () => {
+    const text = renderFancyText(runResult({ faultSites: [faultSite()] }), {}, THEMED, 100);
+    const line =
+      THEMED.dim('  src/clients/profile.ts:7:26 in fetchProfile, http-500: ') +
+      THEMED.good('status-checked') +
+      THEMED.dim(', threw at src/clients/profile.ts:9');
+    expect(text).toContain(`${THEMED.title('Handled (1):')}\n${line}`);
+    expect(stripAnsi(text)).toBe(renderFancyText(runResult({ faultSites: [faultSite()] }), {}, PLAIN, 100));
   });
 
   it('lists up to 20 findings, and every finding with allFindings', () => {

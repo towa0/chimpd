@@ -1,6 +1,6 @@
 import type { MutantRecord } from '../../src/core/index.js';
 import type { CallSite, CallSiteResult, FaultRunResult } from '../../src/fault-run/index.js';
-import type { Finding, RunResult } from '../../src/orchestrator/index.js';
+import type { FaultSite, Finding, RunResult } from '../../src/orchestrator/index.js';
 import type { RunPlan } from '../../src/plan/index.js';
 import { severityOf } from '../../src/severity/index.js';
 import type { BatchReport, MutationResult } from '../../src/stryker-adapter/index.js';
@@ -102,6 +102,25 @@ export function faultRun(overrides: Partial<FaultRunResult> = {}): FaultRunResul
   };
 }
 
+export function faultSite(overrides: Partial<FaultSite> = {}): FaultSite {
+  return {
+    file: 'src/clients/profile.ts',
+    line: 7,
+    column: 26,
+    functionName: 'fetchProfile',
+    faultKind: 'http-500',
+    verdict: 'status-checked',
+    outcome: 'handled',
+    findingKind: null,
+    reason: 'the code checked the status of the 500 response; the code raised its own error at src/clients/profile.ts:9: Error: profile request failed with 500',
+    summary: 'threw at src/clients/profile.ts:9',
+    path: 'fetch',
+    tests: ['test/profile.test.ts > loads a profile'],
+    reachedFrom: ['src/clients/profile.ts fetchProfile'],
+    ...overrides,
+  };
+}
+
 export function mutationFinding(overrides: Partial<Finding> = {}): Finding {
   return {
     source: 'mutation',
@@ -185,6 +204,7 @@ export function runResult(overrides: Partial<RunResult> = {}): RunResult {
     skipped: [],
     inconclusive: [],
     conflicts: [],
+    faultSites: [],
     ignored: [],
     baseline: null,
     ...overrides,

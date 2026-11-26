@@ -2,6 +2,7 @@ import { exitCodeOf, type ExitOptions, type Finding, type RunResult } from '../o
 import {
   findingDetails,
   findingsShown,
+  handledLines,
   hiddenFindingsLine,
   plural,
   seconds,
@@ -31,6 +32,16 @@ function findingsSection(result: RunResult, theme: Theme, shown: number): string
   const hidden = result.findings.length - shown;
   if (hidden > 0) lines.push(theme.dim(`${INDENT}${hiddenFindingsLine(hidden)}`));
   return lines;
+}
+
+function handledSection(result: RunResult, options: ReportOptions, theme: Theme): string[] {
+  const section = handledLines(result, options);
+  if (section === null) return [];
+  return [
+    theme.title(section.title),
+    ...section.lines.map(({ lead, verdict, tail }) => `${theme.dim(lead)}${theme.good(verdict)}${theme.dim(tail)}`),
+    ...(section.overflow === null ? [] : [theme.dim(section.overflow)]),
+  ];
 }
 
 function phaseLine(line: string, theme: Theme): string {
@@ -122,6 +133,7 @@ export function renderFancyText(result: RunResult, options: ReportOptions, theme
   const sections = textSections(result, options).flatMap((section): string[][] => {
     if (section.name === 'result') return [];
     if (section.name === 'findings') return [findingsSection(result, theme, findingsShown(options))];
+    if (section.name === 'handled') return [handledSection(result, options, theme)];
     return [styled(section, theme)];
   });
   const closing = result.status === 'error' ? [] : [box(summaryLines(result, theme), width, theme)];

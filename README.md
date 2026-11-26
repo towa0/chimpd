@@ -40,7 +40,7 @@ npx bruise baseline --level prod --prune
 | `--base <ref>` | The ref the branch is compared against, through its merge base with `HEAD`. Default `origin/main`. |
 | `--json` | `run` only. Print the JSON report instead of text. |
 | `--strict` | `run` only. Exit 2 whenever anything in scope was not checked. |
-| `--all-findings` | `run` only. List every finding in the text report; without it, the first 20 are listed and the rest counted. `--json` always lists every finding. |
+| `--all-findings` | `run` only. List every finding and every handled fault site in the text report; without it, the first 20 findings and the first 10 handled sites are listed and the rest counted. `--json` always lists them all. |
 | `--verbose` | Pass on what the project's own tests print. It goes to stderr, so `--json` output stays clean. Without it, that output is discarded. |
 | `--seed <n>` | An integer from 0 to 2147483647 that decides ties when a cap or the budget forces a choice; see [Seed](#seed). Without it, bruise picks one and prints it in the report. |
 | `--cwd <dir>` | The project to check. Default the current directory. |
@@ -186,6 +186,8 @@ The fault kinds below answer the call at once. A test that only checks the happy
 
 A project-raised error and a failed check of the test's own are handled verdicts whose reason names the evidence; they are never findings.
 
+Handled means the fault did not escape; it does not judge the fallback. A function that catches a refused connection and returns a wrong default value is handled here; whether that value is right is for the project's own tests, and for the mutation phase, to say. Every handled site is listed in the text report under Handled and in the JSON report under `coverage.faultSites`, with the evidence.
+
 HTTP 500: each call to the site gets a `500 Internal Server Error` response with the short body `Internal Server Error`. bruise watches the response the code receives: for `fetch`, reads of `ok`, `status` and `statusText`, and of the body through `json`, `text`, `arrayBuffer`, `blob`, `formData`, `bytes` or `body`; for `http`, reads of `statusCode` and `statusMessage`, and of the body through a `data` or `readable` listener, `pipe` or async iteration. Discarding the body with `resume()` does not count as reading it.
 
 | Result | Meaning |
@@ -225,7 +227,9 @@ Call sites are found by running the tests, so a call no test makes would leave n
 
 ## Output
 
-The text report shows, in this order, the diff scope, a coverage summary, the findings most severe first, how many findings were ignored and by what, stale and not-evaluated baseline entries, everything that was skipped, every invalid mutant grouped by its reason, everything inconclusive with its reason, test files that replace HTTP entry points, the phase outcomes, and a result line. It lists the first 20 findings and counts the rest, as in "68 more findings not shown; --all-findings or --json lists every finding"; `--all-findings` lists them all. Piped or redirected, it is plain text without colour; on a terminal it gets the layout described under [Terminal output](#terminal-output). Errors are shown by their first line only; the JSON report keeps the full error.
+The text report shows, in this order, the diff scope, a coverage summary, the findings most severe first, how many findings were ignored and by what, stale and not-evaluated baseline entries, everything that was skipped, every fault site that handled its fault, every invalid mutant grouped by its reason, everything inconclusive with its reason, test files that replace HTTP entry points, the phase outcomes, and a result line. It lists the first 20 findings and counts the rest, as in "68 more findings not shown; --all-findings or --json lists every finding"; `--all-findings` lists them all.
+
+The Handled section lists each call site and fault kind whose verdict was handled, one per line: location and function, fault kind, verdict and the evidence in a few words, as in `src/clients/profile.ts:7:26 in fetchProfile, http-500: status-checked, threw at src/clients/profile.ts:9`. The evidence is one of "test passed", "test failed its own check", "threw at file:line" (project code raised its own error) or, for the black hole, "timeout fired, test passed". It lists the first 10 and counts the rest; `--all-findings` lists them all. On a terminal the lines are dim, with the verdict in green. Piped or redirected, it is plain text without colour; on a terminal it gets the layout described under [Terminal output](#terminal-output). Errors are shown by their first line only; the JSON report keeps the full error.
 
 `--json` prints a report with `"schemaVersion": 1`. The version is raised on any change that removes, renames or retypes a field; new fields may appear without a version change, and so may new values of an enumerated field, such as the `invalid-ignore` finding kind. Top-level fields:
 
@@ -238,7 +242,7 @@ The text report shows, in this order, the diff scope, a coverage summary, the fi
 - `findings`: every finding that counts, with its severity and its mutation or fault detail; a mutation finding carries the `statement` hash a baseline entry would use. A fault finding's `fault` carries `kind`, `verdict`, `path`, the faulted `tests`, `reachedFrom`, the changed functions that put the faulted calls in scope as `"file function"` (the site's own function when the call itself changed, the changed callers when the site is an unchanged wrapper), and `notFaultedFrom`, changed callers that reach the site through none of the faulted tests
 - `ignored`: every finding the baseline or an inline comment set aside, with `ignoredBy` (`baseline` or `inline`) and `ignoreReason`
 - `baseline`: whether `bruise-baseline.json` exists, its number of entries, and its `stale` and `notEvaluated` entries; `null` when the run stopped before reading it
-- `coverage`: `checked` counts, plus `invalid`, `invalidExcluded` (`true` when at least one valid mutant ran, so the invalid mutants are listed but do not make the run `partial`), `skipped`, `inconclusive` and `conflicts`, each item with its reason, and `notTested`: per file, the mutants that were generated but not tested before the budget ran out (`mutants` is `null` for a file whose mutants were never planned); each of those mutants is also in `skipped`
+- `coverage`: `checked` counts, plus `invalid`, `invalidExcluded` (`true` when at least one valid mutant ran, so the invalid mutants are listed but do not make the run `partial`), `skipped`, `inconclusive` and `conflicts`, each item with its reason; `faultSites`: every faulted call site and fault kind that got a verdict, by location, with `file`, `line`, `column`, `functionName`, `faultKind`, `verdict`, `outcome` (`handled`, which means the fault did not escape and does not judge the fallback, or `finding`, ignored findings included), `findingKind` (`null` when handled), the full `reason`, `summary` (the evidence in a few words, as in the text report), `path`, the faulted `tests` and `reachedFrom`; inconclusive sites are under `inconclusive` instead; and `notTested`: per file, the mutants that were generated but not tested before the budget ran out (`mutants` is `null` for a file whose mutants were never planned); each of those mutants is also in `skipped`
 
 Every duration is in whole milliseconds. Nothing in scope is dropped silently: whatever was not checked appears under `coverage` and in the text report.
 
@@ -260,10 +264,10 @@ Colour uses the 16 basic ANSI colours only, so the terminal's own theme decides 
 | severity high | bold magenta | `[high ...]`, score 70 or more |
 | severity medium | blue | `[medium ...]`, score 50 to 69 |
 | severity low | yellow | `[low ...]`, score below 50 |
-| good | green | killed, handled, completed, a clean Result line |
+| good | green | killed, handled, the verdict of a handled fault site, completed, a clean Result line |
 | warning | yellow | partial, not tested, excluded, inconclusive, budget-exhausted |
 | error | red | exit 2, a tool error, a failed phase |
-| secondary | dim | the tagline, finding reasons, the summary box border, the progress bar track |
+| secondary | dim | the tagline, finding reasons, handled fault sites, the summary box border, the progress bar track |
 | progress | magenta | the spinner and the progress bar fill |
 
 The Result line is bold in its outcome's colour, with "coverage complete" in green and "coverage partial" in yellow. Palette for the website and other material, for reference only; the CLI itself uses the ANSI colours above:
@@ -303,7 +307,9 @@ Gaps that make a run partial include call sites over the preset cap, a budget th
 
 - Vitest and TypeScript only.
 - Under the `happy-dom` environment the fault phase is inconclusive: happy-dom replaces `fetch` and `Request` with its own, which bruise cannot fault yet. Custom environments that replace them are reported as a patch.
-- The verdicts of the faults that answer at once judge the error that failed the test. A test that catches the fault's error itself, for example with `expect(...).rejects`, and then fails its own assertion, counts as the test's own check. Code that catches the error and throws the same object again counts as letting it escape.
+- The verdicts of the faults that answer at once judge the error that failed the test, and handled means only that the fault did not escape: a wrong fallback value is still handled.
+- A test that catches the fault's error itself, for example with `expect(...).rejects`, and then fails its own assertion counts as the test's own check, so the site is handled even though the fault reached the test.
+- Code that catches the fault's error and throws the same object again counts as letting it escape, so the site is a finding even if the code logged or otherwise dealt with it first.
 - Under `malformed-json`, a parse is seen through the global `JSON.parse`. A parser that does not go through it, such as a streaming JSON library, leaves the site inconclusive.
 - Under `http-500`, a status read counts once it happens; a body read before it makes the finding even when the status is checked later. A body read with `read()` alone, without a `readable` listener, is not seen. What the code does with the response after its test body ended is not seen.
 - A test file that replaces `fetch` or the `http` entry points itself, for example with a mock library, prevents faulting for the calls made under it. It is reported as a conflict.

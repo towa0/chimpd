@@ -1,8 +1,16 @@
-import { firstErrorLine, otherCallers, type FaultKind, type MutantRecord, type Preset } from '../core/index.js';
+import {
+  firstErrorLine,
+  otherCallers,
+  type FaultKind,
+  type InjectedObservation,
+  type InjectedVerdict,
+  type MutantRecord,
+  type Preset,
+} from '../core/index.js';
 import type { CallSite, CallSiteResult, FaultRunResult, SkipReason } from '../fault-run/index.js';
 import { mutationFindingKind, priorOf, severityOf } from '../severity/index.js';
 import type { MutationResult } from '../stryker-adapter/index.js';
-import type { Checked, FaultTally, Finding, Item, NotTestedFile, Tally } from './types.js';
+import type { Checked, FaultSite, FaultTally, Finding, Item, NotTestedFile, Tally } from './types.js';
 
 export const NOTHING_CHECKED: Checked = { mutants: 0, invalidMutants: 0, callSites: 0 };
 
@@ -150,6 +158,54 @@ function callersOf(entry: CallSiteResult): { reachedFrom: string[]; notFaultedFr
     reachedFrom: [...reachedFrom].sort(),
     notFaultedFrom: entry.site.reachedFrom.filter((caller) => !reachedFrom.has(caller)),
   };
+}
+
+const BLACK_HOLE_SUMMARIES: Readonly<Record<string, string>> = {
+  'handled-timeout': 'timeout fired, test passed',
+  'timeout-mishandled': 'timeout fired, then the test failed or an error escaped',
+  hang: 'no timeout of its own',
+  detached: 'test passed with the request still pending',
+};
+
+function injectedSummary(observation: InjectedObservation, verdict: InjectedVerdict): string {
+  if (verdict.verdict === 'status-ignored') return 'body read before the status';
+  if (!observation.errorReachedCaller) return 'no error listener';
+  const { failure } = observation;
+  if (failure === null) return 'test passed';
+  if (failure.kind === 'fault-escaped') return `escaped: ${failure.error}`;
+  if (failure.kind === 'raised-by-project') return `threw at ${failure.raisedAt ?? 'project code'}`;
+  if (failure.kind === 'raised-by-test') return 'test failed its own check';
+  return `unattributed: ${failure.error}`;
+}
+
+function summaryOf(entry: CallSiteResult): string {
+  if (entry.kind === 'blackhole') return BLACK_HOLE_SUMMARIES[entry.verdict] ?? entry.reason;
+  const shown = entry.tests.flatMap(({ injected }) =>
+    injected === null || injected.verdict.verdict !== entry.verdict ? [] : [injectedSummary(injected.observation, injected.verdict)],
+  );
+  return shown.length === 0 ? entry.reason : [...new Set(shown)].join('; ');
+}
+
+/** Every result that is a verdict on the site, with the evidence that decided it. */
+export function faultSitesOf(results: readonly CallSiteResult[]): FaultSite[] {
+  return results
+    .filter((entry) => entry.verdict !== 'inconclusive')
+    .map((entry) => ({
+      file: entry.site.file,
+      line: entry.site.line,
+      column: entry.site.column,
+      functionName: entry.site.functionName,
+      faultKind: entry.kind,
+      verdict: entry.verdict,
+      outcome: entry.findingKind === null ? ('handled' as const) : ('finding' as const),
+      findingKind: entry.findingKind,
+      reason: entry.reason,
+      summary: summaryOf(entry),
+      path: entry.site.path,
+      tests: entry.tests.map(({ test }) => `${test.file} > ${test.name}`),
+      reachedFrom: callersOf(entry).reachedFrom,
+    }))
+    .sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : a.line - b.line || a.column - b.column));
 }
 
 export function faultItems(result: FaultRunResult, preset: Preset): PhaseItems {

@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { BASELINE_FILE, serializeBaseline, SourceStatements } from '../../src/baseline/index.js';
-import { PRESETS } from '../../src/core/index.js';
+import { PRESETS, type InjectedObservation } from '../../src/core/index.js';
 import type { FaultRunRequest } from '../../src/fault-run/index.js';
 import {
   exitCodeOf,
@@ -15,6 +15,7 @@ import {
 import { renderText } from '../../src/reporter/index.js';
 import type { MutationRequest } from '../../src/stryker-adapter/index.js';
 import { readTimings } from '../../src/timings/index.js';
+import { classifyInjected } from '../../src/verdict/index.js';
 import type { ProgressEvent } from '../../src/progress/events.js';
 import { batch, faultRun, mutant, mutationResult, site, siteResult } from '../helpers/run-fixtures.js';
 import { createTempRepo, type TempRepo } from '../helpers/temp-repo.js';
@@ -661,6 +662,78 @@ const FETCH_SOURCE = [
 ].join('\n');
 
 describe('fault kinds', () => {
+  it('lists every faulted site that got a verdict, handled or a finding, with its evidence in short', async () => {
+    const repo = changedRepo();
+    const test = { id: 't1', file: 'test/a.test.ts', name: 'loads' };
+    const ranWith = (observation: InjectedObservation) => [
+      { test, observations: [], injected: { observation, verdict: classifyInjected(observation) }, problem: null },
+    ];
+    const checked: InjectedObservation = {
+      kind: 'http-500',
+      attempts: 1,
+      errorReachedCaller: true,
+      testOutcome: 'failed',
+      failure: { kind: 'raised-by-project', via: 'test', error: 'Error: load failed with 500', raisedAt: 'src/a.ts:7' },
+      response: { statusRead: true, bodyConsumed: false, bodyBeforeStatus: false },
+      jsonParsed: null,
+    };
+    const escaped: InjectedObservation = {
+      ...checked,
+      kind: 'connection-refused',
+      response: null,
+      failure: { kind: 'fault-escaped', via: 'test', error: 'TypeError: fetch failed', raisedAt: null },
+    };
+    const caught: InjectedObservation = {
+      ...checked,
+      kind: 'malformed-json',
+      jsonParsed: true,
+      failure: { kind: 'raised-by-test', via: 'test', error: 'AssertionError: expected null to be 1', raisedAt: null },
+    };
+    const later = site({ key: 'src/a.ts:9:1', line: 9, column: 1 });
+    const run = harness(repo, {
+      runFaults: () =>
+        Promise.resolve(
+          faultRun({
+            results: [
+              siteResult({ site: later, verdict: 'handled-timeout' }),
+              siteResult({ site: later, kind: 'malformed-json', verdict: 'parse-handled', reason: 'caught', tests: ranWith(caught) }),
+              siteResult({ verdict: 'inconclusive', reason: 'the test did not reach the call site under the fault' }),
+              siteResult({ kind: 'http-500', verdict: 'status-checked', reason: 'checked', tests: ranWith(checked) }),
+              siteResult({
+                kind: 'connection-refused',
+                verdict: 'refusal-mishandled',
+                findingKind: 'refusal-mishandled',
+                reason: 'escaped',
+                tests: ranWith(escaped),
+              }),
+            ],
+          }),
+        ),
+    });
+    const result = await runBruise(run.options({ level: 'shake' }));
+    expect(result.faultSites.map((entry) => [entry.line, entry.faultKind, entry.verdict, entry.outcome, entry.findingKind, entry.summary])).toEqual([
+      [5, 'http-500', 'status-checked', 'handled', null, 'threw at src/a.ts:7'],
+      [5, 'connection-refused', 'refusal-mishandled', 'finding', 'refusal-mishandled', 'escaped: TypeError: fetch failed'],
+      [9, 'blackhole', 'handled-timeout', 'handled', null, 'timeout fired, test passed'],
+      [9, 'malformed-json', 'parse-handled', 'handled', null, 'test failed its own check'],
+    ]);
+    expect(result.faultSites[0]).toEqual({
+      file: 'src/a.ts',
+      line: 5,
+      column: 10,
+      functionName: 'load',
+      faultKind: 'http-500',
+      verdict: 'status-checked',
+      outcome: 'handled',
+      findingKind: null,
+      reason: 'checked',
+      summary: 'threw at src/a.ts:7',
+      path: 'fetch',
+      tests: ['test/a.test.ts > loads'],
+      reachedFrom: [],
+    });
+  });
+
   it('reports one result per site and kind, with the kind on findings and gaps, and counts each site once', async () => {
     const repo = changedRepo();
     const run = harness(repo, {
