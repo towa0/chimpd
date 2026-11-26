@@ -35,13 +35,30 @@ describe('text report', () => {
     );
   });
 
-  it('shows only as many findings as the preset allows and says how many more there are', () => {
-    const findings = [faultFinding(), ...[3, 9, 10].map((line) => mutationFinding({ line }))];
-    const text = renderText(runResult({ findings }));
-    expect(text).toContain('  3. [medium 55] src/discount.ts:9:7');
-    expect(text).not.toContain('src/discount.ts:10:7');
-    expect(text).toContain('  1 more finding not shown; --json lists every finding');
-    expect(renderText(runResult({ level: 'prod', findings }))).toContain('src/discount.ts:10:7');
+  it('shows up to 20 findings at every level and says how many more there are', () => {
+    const findings = Array.from({ length: 22 }, (_, index) => mutationFinding({ line: index + 1 }));
+    for (const level of ['poke', 'prod', 'shake'] as const) {
+      const text = renderText(runResult({ level, findings }));
+      expect(text).toContain('  20. [medium 55] src/discount.ts:20:7');
+      expect(text).not.toContain('src/discount.ts:21:7');
+      expect(text).toContain('  2 more findings not shown; --all-findings or --json lists every finding');
+    }
+  });
+
+  it("names the changed callers a fault site was reached through, but not the site's own function", () => {
+    const fault = faultFinding().fault;
+    if (fault === null) throw new Error('a fault finding has fault detail');
+    const own = renderText(runResult({ findings: [faultFinding({ fault: { ...fault, reachedFrom: ['src/clients/ledger.ts postLedgerEntry'] } })] }));
+    expect(own).not.toContain('reached from changed code');
+    const wrapper = renderText(runResult({ findings: [faultFinding({ fault: { ...fault, reachedFrom: ['src/checkout.ts checkout'] } })] }));
+    expect(wrapper).toContain('    reached from changed code: src/checkout.ts checkout');
+  });
+
+  it('lists every finding with allFindings', () => {
+    const findings = Array.from({ length: 22 }, (_, index) => mutationFinding({ line: index + 1 }));
+    const text = renderText(runResult({ findings }), { allFindings: true });
+    expect(text).toContain('  22. [medium 55] src/discount.ts:22:7');
+    expect(text).not.toContain('not shown');
   });
 
   it('groups skipped items by reason and lists inconclusive items and conflicts one per line', () => {
@@ -103,7 +120,9 @@ describe('text report', () => {
   it('lists invalid mutants grouped by why they could not run', () => {
     const text = renderText(
       runResult({
+        status: 'partial',
         checked: { mutants: 0, invalidMutants: 3, callSites: 0 },
+        skipped: [{ source: 'mutation', file: 'src/b.ts', line: 4, reason: 'not tested: budget' }],
         invalid: [
           { source: 'mutation', file: 'src/a.ts', line: 2, reason: "compile error: src/a.ts(2,7): error TS2345: Argument of type 'unknown'." },
           { source: 'mutation', file: 'src/a.ts', line: 2, reason: "compile error: src/a.ts(2,7): error TS2345: Argument of type 'unknown'." },
@@ -120,7 +139,9 @@ describe('text report', () => {
         '    src/a.ts:3',
       ].join('\n'),
     );
-    expect(text.indexOf('Invalid mutants (3):')).toBeLessThan(text.indexOf('Findings, most severe first:'));
+    expect(text.indexOf('Findings, most severe first:')).toBeLessThan(text.indexOf('Skipped (1):'));
+    expect(text.indexOf('Skipped (1):')).toBeLessThan(text.indexOf('Invalid mutants (3):'));
+    expect(text).toContain('  3 invalid mutants failed to compile or crashed the runner; each is listed below');
   });
 
   it('counts invalid mutants separately', () => {

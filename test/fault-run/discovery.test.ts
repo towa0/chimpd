@@ -70,8 +70,10 @@ describe('call-site discovery on the sample app', () => {
       functionName: 'checkStock',
       path: 'fetch',
       scopeKind: 'changed',
+      reachedFrom: ['src/clients/inventory.ts checkStock'],
       unattributedCalls: 0,
     });
+    expect(site?.reachedBy.map((entry) => entry.reachedFrom)).toEqual([['src/clients/inventory.ts checkStock']]);
     expect(site?.frames.map((frame) => frame.file)).toEqual(['src/clients/inventory.ts', 'src/product-page.ts']);
     expect(site?.reachedBy[0]?.calls).toBe(1);
     expect(site?.reachedBy[0]?.durationMs).toBeGreaterThan(0);
@@ -113,7 +115,12 @@ describe('call-site discovery with enclosing functions', () => {
   it('includes an http call inside a changed function', () => {
     const site = siteAt(discovery, app, 'src/clients/ledger.ts', 'http.request(');
     // The call sits in a Promise executor, so its name comes from the function around it.
-    expect(site).toMatchObject({ path: 'http', scopeKind: 'enclosing-function', functionName: 'postLedgerEntry' });
+    expect(site).toMatchObject({
+      path: 'http',
+      scopeKind: 'enclosing-function',
+      functionName: 'postLedgerEntry',
+      reachedFrom: ['src/clients/ledger.ts postLedgerEntry'],
+    });
     expect(reachingTests(site)).toEqual(['test/ledger.test.ts > posts a ledger entry']);
     expect(discovery.outOfScopeSites).toBe(0);
   });

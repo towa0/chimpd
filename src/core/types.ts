@@ -68,20 +68,20 @@ export interface BlackHoleObservation {
   readonly testOutcome: TestOutcome;
   readonly errorEscaped: boolean;
   readonly deadlineHit: boolean;
+  /** How long the request was held before the test was released: the window in which a deadline of the code's own can be seen to fire. */
+  readonly faultWindowMs: number;
 }
 
 export type BlackHoleVerdictKind =
   | 'handled-timeout'
   | 'timeout-mishandled'
   | 'hang'
-  | 'long-timeout'
   | 'detached'
   | 'inconclusive';
 
 export type FaultFindingKind =
   | 'abort-mishandled'
   | 'hang-no-timeout'
-  | 'timeout-exceeds-budget'
   | 'fire-and-forget'
   | 'refusal-mishandled'
   | 'error-status-ignored'
@@ -110,6 +110,24 @@ export interface ResponseUse {
   readonly bodyBeforeStatus: boolean;
 }
 
+/**
+ * What failed a test under a fault, judged by the error itself. fault-escaped: the error the fault raised,
+ * or one wrapping it outside project code, failed the test or went unhandled. raised-by-project: project code
+ * threw an error of its own, wrapping the fault's or not. raised-by-test: an assertion or the test's own code.
+ * unattributed: none of these can be told.
+ */
+export type FailureKind = 'fault-escaped' | 'raised-by-project' | 'raised-by-test' | 'unattributed';
+
+export interface FailureEvidence {
+  readonly kind: FailureKind;
+  /** test: the error the test body threw; unhandled: an unhandled rejection or error event. */
+  readonly via: 'test' | 'unhandled';
+  /** The first line of the error, as "Name: message". */
+  readonly error: string;
+  /** Where project code raised it, as "file:line"; set for raised-by-project only. */
+  readonly raisedAt: string | null;
+}
+
 /** One test body under a fault that answers at once, over every call it made to the site. */
 export interface InjectedObservation {
   readonly kind: InjectedFaultKind;
@@ -118,7 +136,8 @@ export interface InjectedObservation {
   /** false when an http request had no error listener, so its error could not reach the caller. */
   readonly errorReachedCaller: boolean;
   readonly testOutcome: TestOutcome;
-  readonly errorEscaped: boolean;
+  /** Why the test failed, or the fault's error that escaped unhandled; null when the test passed and nothing of the fault escaped. */
+  readonly failure: FailureEvidence | null;
   /** For a fault that answers with a response; null when there is none, or none reached the code. */
   readonly response: ResponseUse | null;
   /** Whether the code parsed the faulted body as JSON; null when the fault kind does not watch parsing. */

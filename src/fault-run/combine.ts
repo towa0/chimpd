@@ -6,7 +6,6 @@ import type { CallSite, CallSiteResult, TestFaultResult } from './types.js';
 const FINDINGS_BY_SEVERITY: readonly BlackHoleVerdictKind[] = [
   'hang',
   'timeout-mishandled',
-  'long-timeout',
   'detached',
 ];
 
@@ -49,7 +48,10 @@ function combineInjected(site: CallSite, kind: FaultKind, tests: readonly TestFa
   const reason = problem ?? undecided ?? missing;
   if (reason !== undefined) return { site, kind, verdict: 'inconclusive', findingKind: null, reason, tests };
   const handled = verdicts[0]?.verdict ?? 'inconclusive';
-  return { site, kind, verdict: handled, findingKind: null, reason: HANDLED_REASONS[kind], tests };
+  const evidence = [...new Set(verdicts.map((verdict) => verdict.reason))];
+  const [only] = evidence;
+  const why = evidence.length === 1 && only !== undefined ? only : `${HANDLED_REASONS[kind]}: ${evidence.join('; ')}`;
+  return { site, kind, verdict: handled, findingKind: null, reason: why, tests };
 }
 
 /**

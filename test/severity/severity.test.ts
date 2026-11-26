@@ -40,7 +40,6 @@ describe('severity scale', () => {
       'error-status-ignored',
       'survived',
       'error-status-mishandled',
-      'timeout-exceeds-budget',
       'invalid-ignore',
       'malformed-json-mishandled',
       'no-coverage',

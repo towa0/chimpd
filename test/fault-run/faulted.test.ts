@@ -89,6 +89,7 @@ describe('faulted runs on the sample app', () => {
           testOutcome: 'passed',
           errorEscaped: false,
           deadlineHit: false,
+          faultWindowMs: DEADLINE_MS,
         },
       ]);
     },

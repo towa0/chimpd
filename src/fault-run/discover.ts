@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { toPosix, type ScopeRange } from '../core/index.js';
+import { functionLabel, toPosix, type ScopeRange } from '../core/index.js';
 import { callSiteKey, projectFrames, scopedFrame, type ProjectFrame } from '../fault-recon/call-site.js';
 import { patchedBeforeTestsReason, pristineFingerprints, type Fingerprints } from '../fault-recon/conflicts.js';
 import type { VitestNodeModule } from '../fault-recon/index.js';
@@ -27,8 +27,7 @@ function enclosingFunctionName(frames: readonly ProjectFrame[]): string | null {
 }
 
 function callerLabel(frames: readonly ProjectFrame[], from: ProjectFrame): string {
-  const name = enclosingFunctionName(frames.slice(frames.indexOf(from)));
-  return name === null ? `${from.file}:${from.line}` : `${from.file} ${name}`;
+  return functionLabel(from.file, from.line, enclosingFunctionName(frames.slice(frames.indexOf(from))));
 }
 
 interface SiteBuilder {
@@ -136,15 +135,15 @@ export async function discoverCallSites(request: DiscoveryRequest): Promise<Disc
     };
     builders.set(key, builder);
     for (const frame of frames) builder.frames.set(callSiteKey(frame), frame);
-    const caller = scoped.frame === innermost ? null : callerLabel(frames, scoped.frame);
-    if (caller !== null) builder.callers.add(caller);
+    const caller = callerLabel(frames, scoped.frame);
+    builder.callers.add(caller);
 
     const test = event.testId === null ? undefined : tests.get(event.testId);
     if (event.testId === null) builder.unattributedCalls += 1;
     else if (test?.state === 'pass' && !patchedByFile.has(test.file)) {
       builder.callsByTest.set(test.id, (builder.callsByTest.get(test.id) ?? 0) + 1);
       const callers = builder.callersByTest.get(test.id) ?? new Set<string>();
-      if (caller !== null) callers.add(caller);
+      callers.add(caller);
       builder.callersByTest.set(test.id, callers);
     }
   }

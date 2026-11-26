@@ -1,4 +1,4 @@
-import type { AbortKind, DeadlineMechanism, FaultKind, ResponseUse, ScopeRange, TestOutcome } from '../core/index.js';
+import type { AbortKind, DeadlineMechanism, FailureEvidence, FaultKind, ResponseUse, ScopeRange, TestOutcome } from '../core/index.js';
 import type { StackFrame } from './call-site.js';
 import type { Fingerprints } from './conflicts.js';
 
@@ -66,6 +66,8 @@ export type RuntimeEvent =
     })
   | (TestScoped & { readonly type: 'call'; readonly path: 'fetch' | 'http'; readonly frames: readonly StackFrame[] })
   | { readonly type: 'body-start'; readonly testId: string; readonly testFile: string }
+  /** A fault error that escaped unhandled after its test body had ended. */
+  | { readonly type: 'escaped'; readonly testId: string; readonly failure: FailureEvidence }
   | {
       readonly type: 'body-end';
       readonly testId: string;
@@ -79,4 +81,6 @@ export type RuntimeEvent =
       readonly injections?: readonly InjectedCall[];
       /** Whether the body parsed the malformed JSON body; absent unless the fault is malformed-json. */
       readonly jsonParsed?: boolean;
+      /** What failed the body, or the fault error that escaped it; absent in a recon or black hole run. */
+      readonly failure?: FailureEvidence | null;
     };

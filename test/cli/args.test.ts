@@ -14,19 +14,19 @@ describe('command line parsing', () => {
   it('reads every option of the run command', () => {
     expect(
       parseCliArgs(
-        ['run', '--level', 'shake', '--base', 'main', '--json', '--strict', '--verbose', '--seed', '17', '--cwd', 'app'],
+        ['run', '--level', 'shake', '--base', 'main', '--json', '--strict', '--all-findings', '--verbose', '--seed', '17', '--cwd', 'app'],
         CWD,
       ),
     ).toEqual({
       kind: 'run',
-      options: { level: 'shake', base: 'main', json: true, strict: true, verbose: true, seed: 17, cwd: path.join(CWD, 'app'), plan: false, color: undefined, banner: true },
+      options: { level: 'shake', base: 'main', json: true, strict: true, allFindings: true, verbose: true, seed: 17, cwd: path.join(CWD, 'app'), plan: false, color: undefined, banner: true },
     });
   });
 
   it('defaults to text, non-strict, no base, no seed and the current directory', () => {
     expect(parseCliArgs(['run', '--level=poke'], CWD)).toEqual({
       kind: 'run',
-      options: { level: 'poke', base: undefined, json: false, strict: false, verbose: false, seed: undefined, cwd: CWD, plan: false, color: undefined, banner: true },
+      options: { level: 'poke', base: undefined, json: false, strict: false, allFindings: false, verbose: false, seed: undefined, cwd: CWD, plan: false, color: undefined, banner: true },
     });
   });
 
@@ -44,6 +44,7 @@ describe('command line parsing', () => {
     expect(parseCliArgs(['run', '--level', 'poke', '--no-color', '--no-banner'], CWD)).toMatchObject({ options: { color: false, banner: false } });
     expect(error(['run', '--level', 'poke', '--color', '--no-color'])).toBe('--color and --no-color cannot be used together');
     expect(error(['baseline', '--level', 'poke', '--no-banner'])).toBe('--no-banner only applies to bruise run');
+    expect(error(['baseline', '--level', 'poke', '--all-findings'])).toBe('--all-findings only applies to bruise run');
   });
 
   it('keeps an absolute --cwd as given', () => {

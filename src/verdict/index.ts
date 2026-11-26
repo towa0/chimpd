@@ -54,15 +54,18 @@ export function classifyBlackHole(observation: BlackHoleObservation): BlackHoleV
   if (observation.deadlineHit) {
     if (hasDeadline(observation)) {
       const deadlineMs = knownDeadlineMs(observation);
+      const window = `the fault window (${observation.faultWindowMs} ms)`;
       return {
         ...pending,
-        verdict: 'long-timeout',
-        findingKind: 'timeout-exceeds-budget',
+        verdict: 'inconclusive',
+        findingKind: null,
         deadlineMs,
         reason:
           deadlineMs === null
-            ? 'the call has a deadline that did not fire within the test deadline; deadline unknown'
-            : `the call has a ${deadlineMs} ms deadline that did not fire within the test deadline`,
+            ? `the code has a timeout of its own whose length is unknown, and it did not fire within ${window}; not observed`
+            : deadlineMs > observation.faultWindowMs
+              ? `the code's own timeout (${deadlineMs} ms) is longer than ${window}; not observed`
+              : `the code's own timeout (${deadlineMs} ms) did not fire within ${window}; not observed`,
       };
     }
     if (deadlineUndeterminable(observation)) {

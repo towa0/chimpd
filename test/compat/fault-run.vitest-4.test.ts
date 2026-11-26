@@ -63,3 +63,25 @@ it('holds the site in the test body only and reports the pending request on vite
     expect.objectContaining({ signalAttached: false, requestState: 'pending', deadlineHit: true }),
   ]);
 });
+
+it('follows the refused connection to the error that failed the test on vitest 4.1.12', async () => {
+  const site = discovery.sites[0];
+  if (site === undefined) throw new Error('discovery found no call site');
+  const run = await runFaultedSite({
+    targetRoot,
+    configFile,
+    vitestNode,
+    pristine: await pristineFingerprints(),
+    site,
+    tests: site.reachedBy,
+    ranges,
+    deadlineMs: 300,
+    kind: 'connection-refused',
+  });
+  expect(run.tests[0]?.problem).toBeNull();
+  expect(run.tests[0]?.injected).toMatchObject({
+    attempts: 1,
+    testOutcome: 'failed',
+    failure: { kind: 'fault-escaped', via: 'test', error: 'TypeError: fetch failed', raisedAt: null },
+  });
+});

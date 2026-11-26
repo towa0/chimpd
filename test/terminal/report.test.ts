@@ -23,6 +23,17 @@ describe('terminal report', () => {
     );
   });
 
+  it('lists up to 20 findings, and every finding with allFindings', () => {
+    const findings = Array.from({ length: 21 }, (_, index) => mutationFinding({ line: index + 1 }));
+    const capped = renderFancyText(runResult({ findings }), {}, PLAIN, 100);
+    expect(capped).toContain('src/discount.ts:20:7');
+    expect(capped).not.toContain('src/discount.ts:21:7');
+    expect(capped).toContain('  1 more finding not shown; --all-findings or --json lists every finding');
+    const all = renderFancyText(runResult({ findings }), { allFindings: true }, PLAIN, 100);
+    expect(all).toContain('src/discount.ts:21:7');
+    expect(all).not.toContain('not shown');
+  });
+
   it('ends with a summary of mutant and fault verdicts and the time, then the Result line', () => {
     const text = renderFancyText(runResult(), {}, PLAIN, 100);
     expect(text.endsWith('\nResult: 2 findings (exit 1)\n')).toBe(true);

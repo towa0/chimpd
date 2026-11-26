@@ -40,6 +40,7 @@ npx bruise baseline --level prod --prune
 | `--base <ref>` | The ref the branch is compared against, through its merge base with `HEAD`. Default `origin/main`. |
 | `--json` | `run` only. Print the JSON report instead of text. |
 | `--strict` | `run` only. Exit 2 whenever anything in scope was not checked. |
+| `--all-findings` | `run` only. List every finding in the text report; without it, the first 20 are listed and the rest counted. `--json` always lists every finding. |
 | `--verbose` | Pass on what the project's own tests print. It goes to stderr, so `--json` output stays clean. Without it, that output is discarded. |
 | `--seed <n>` | An integer from 0 to 2147483647 that decides ties when a cap or the budget forces a choice; see [Seed](#seed). Without it, bruise picks one and prints it in the report. |
 | `--cwd <dir>` | The project to check. Default the current directory. |
@@ -82,7 +83,6 @@ The exit code is 0 whenever the plan could be computed, and 2 when it could not:
 | Call sites faulted, at most | 3 | 8 | 20 |
 | Tests run per call site, at most | 1 | 2 | 3 |
 | Fault kinds, in run order | black hole | black hole, http-500 | black hole, http-500, malformed-json, connection refused |
-| Findings shown in the text report | 3 | 5 | 5 |
 
 The mutation phase runs first. The fault phase gets whatever budget is left, including time the mutation phase did not use. A phase with nothing in scope gives its whole share to the other one. Call sites and mutation batches are ordered by a severity prior based on file and function names (payments, auth, storage and similar), so the most sensitive code is checked first when the budget is tight.
 
@@ -173,41 +173,49 @@ Black hole, for each call site:
 | --- | --- |
 | `hang-no-timeout` (finding, base 70) | The call has no timeout of its own; it waits as long as the runtime's transport defaults allow. |
 | `abort-mishandled` (finding, base 65) | The call's own timeout fired, but the test failed or an error escaped. |
-| `timeout-exceeds-budget` (finding, base 50) | The call has a timeout, but it did not fire within the fault deadline (2 s). |
 | `fire-and-forget` (finding, base 40) | The test passed while the request was still pending; nothing waits for it. |
 | handled | The call's timeout fired and the test passed. Counted as checked. |
-| inconclusive | No reliable verdict; listed with the reason. |
+| inconclusive | No reliable verdict; listed with the reason. A call with a timeout of its own that did not fire within the fault deadline (2 s) is inconclusive, not a finding: "the code's own timeout (5000 ms) is longer than the fault window (2000 ms); not observed". |
+
+The fault kinds below answer the call at once. A test that only checks the happy path fails under any of them, whatever the code did, so their verdicts follow what failed the test, not whether it failed. bruise keeps the error each fault raised: the refused connection's error, and what `JSON.parse` threw on the faulted body. When the test body throws, or an unhandled rejection or uncaught exception occurs, bruise follows the error and its `cause` chain, up to 5 levels:
+
+- the fault's own error, reached before any error raised in project or test code, means the fault escaped. This covers `fetch`'s `TypeError: fetch failed` whose cause is the refusal: undici raised it, not the project.
+- an error first raised in a project source file, judged by the first file frame of its stack, means the code dealt with the fault and raised its own error, as in `if (!res.ok) throw new Error(...)` or `throw new Error('bad payload', { cause })`. The report names where.
+- an `AssertionError`, or an error raised in a test file, means the test failed on its own check, for example on the fallback value the code returned.
+- anything else, such as Vitest's own test timeout, cannot be told apart and makes the site inconclusive, with the error.
+
+A project-raised error and a failed check of the test's own are handled verdicts whose reason names the evidence; they are never findings.
 
 HTTP 500: each call to the site gets a `500 Internal Server Error` response with the short body `Internal Server Error`. bruise watches the response the code receives: for `fetch`, reads of `ok`, `status` and `statusText`, and of the body through `json`, `text`, `arrayBuffer`, `blob`, `formData`, `bytes` or `body`; for `http`, reads of `statusCode` and `statusMessage`, and of the body through a `data` or `readable` listener, `pipe` or async iteration. Discarding the body with `resume()` does not count as reading it.
 
 | Result | Meaning |
 | --- | --- |
 | `error-status-ignored` (finding, base 60) | The code read the body of the 500 response before it checked the status, so it treated the error as a success. |
-| `error-status-mishandled` (finding, base 55) | The status was checked or the response left alone, but the test failed or an unhandled rejection or error event escaped. |
-| handled | The code checked the status, or did not use the response at all, and the test passed. |
-| inconclusive | No call got the response, or the response never reached the code; listed with the reason. |
+| `error-status-mishandled` (finding, base 55) | The code parsed the body of the 500 response as JSON after reading the status, and the parse error escaped: it failed the test or went unhandled. |
+| handled | The code checked the status, or did not use the response at all, and nothing from the 500 response escaped: the test passed, failed on its own check, or failed on an error the code raised itself, such as `throw new Error('request failed with 500')` after `if (!res.ok)`. The reason names which. |
+| inconclusive | No call got the response, the response never reached the code, or the test failed on an error that cannot be attributed; listed with the reason. |
 
 Malformed JSON: each call to the site gets a `200` response with `content-type: application/json` and the body `{"bruise-malformed-json":`, which no JSON parser accepts. bruise counts a parse when `JSON.parse` is handed exactly that body, which covers `response.json()`, `JSON.parse(await response.text())` and an `http` body parsed by hand.
 
 | Result | Meaning |
 | --- | --- |
-| `malformed-json-mishandled` (finding, base 50) | The code parsed the body, and the test failed or the parse error escaped as an unhandled rejection or error event. |
-| handled | The code parsed the body, caught the parse error and the test passed. |
-| inconclusive | The code never parsed the body as JSON, so this kind does not apply to the site; or no call got the body. Never handled. |
+| `malformed-json-mishandled` (finding, base 50) | The code parsed the body and the parse error escaped: it is what failed the test, or it went unhandled. |
+| handled | The code parsed the body and the parse error did not escape: the test passed, failed on its own check, or failed on an error the code raised itself after catching the parse error. The reason names which. |
+| inconclusive | The code never parsed the body as JSON, so this kind does not apply to the site; no call got the body; or the test failed on an error that cannot be attributed. |
 
 Connection refused: each call to the site fails as it does when nothing listens on the port. `fetch` rejects with `TypeError: fetch failed` whose cause is an `ECONNREFUSED` error, and an `http` request emits an `error` event with that code, errno and syscall. Each call is refused, so a retry is refused again, and the number of attempts is part of the reason.
 
 | Result | Meaning |
 | --- | --- |
-| `refusal-mishandled` (finding, base 60) | The test failed, an unhandled rejection or error event escaped, or the request had no error listener, so the error never reached the caller. |
-| handled | The error reached the caller and the test passed. |
-| inconclusive | No call was refused, or no reliable verdict; listed with the reason. |
+| `refusal-mishandled` (finding, base 60) | The refused connection's error escaped: it is what failed the test, or it went unhandled; or the request had no error listener, so the error never reached the caller. |
+| handled | The error reached the caller and did not escape: the test passed, failed on its own check, for example on a fallback value, or failed on an error the code raised itself. The reason names which. |
+| inconclusive | No call was refused, or the test failed on an error that cannot be attributed; listed with the reason. |
 
 A test that never reaches the site, a call that escapes the scoped fault, a test process that dies, and a test whose hook or setup fails before its body runs are inconclusive for every kind. The last one is reported as "the test failed before its body ran" with the first line of the error.
 
 Fault phase budget: the black hole waits up to the fault deadline (2 s) per site; the other kinds answer at once, so a run costs the test itself plus Vitest's start. Before each run the remaining budget must cover the tests' unfaulted durations plus the deadline, for every kind, because a call that retries forever runs until it.
 
-A call is in scope when any frame of its stack in the project's own source lies in the diff scope, not only the innermost one. A changed function that calls `fetch` through an unchanged client wrapper in another file therefore has the wrapper's call faulted. The site is still the innermost frame, the wrapper's own `fetch`, and the report names the changed functions that reach it: "reached from changed code: src/live/statuses.ts getStatuses". Only calls that pass through changed code count: a test that reaches the wrapper only from unchanged code is not picked for it, and in a faulted run the same wrapper called from unchanged code in the same test gets the real answer.
+A call is in scope when any frame of its stack in the project's own source lies in the diff scope, not only the innermost one. A changed function that calls `fetch` through an unchanged client wrapper in another file therefore has the wrapper's call faulted. The site is still the innermost frame, the wrapper's own `fetch`, and the report names the changed functions that reach it: "reached from changed code: src/live/statuses.ts getStatuses". When the call itself is in changed code, that function is the site's own, and the text report leaves the line out. Only calls that pass through changed code count: a test that reaches the wrapper only from unchanged code is not picked for it, and in a faulted run the same wrapper called from unchanged code in the same test gets the real answer.
 
 Several changed functions that share one wrapper share one site. It counts once against the call-site cap, is ordered by the seed like any other site, gets one run per fault kind from the budget, and a baseline entry or inline comment for it names the wrapper's file and function, where the finding is reported. Its tests are the cheapest ones, except that a test through a changed caller no picked test goes through comes before a cheaper test through a caller already covered. A changed caller that none of the picked tests goes through is listed on the finding as not faulted at this level.
 
@@ -217,7 +225,7 @@ Call sites are found by running the tests, so a call no test makes would leave n
 
 ## Output
 
-The text report shows the diff scope, a coverage summary, the findings most severe first, how many findings were ignored and by what, stale and not-evaluated baseline entries, everything that was skipped or inconclusive with its reason, test files that replace HTTP entry points, the phase outcomes, and a result line. Piped or redirected, it is plain text without colour; on a terminal it gets the layout described under [Terminal output](#terminal-output). Errors are shown by their first line only; the JSON report keeps the full error.
+The text report shows, in this order, the diff scope, a coverage summary, the findings most severe first, how many findings were ignored and by what, stale and not-evaluated baseline entries, everything that was skipped, every invalid mutant grouped by its reason, everything inconclusive with its reason, test files that replace HTTP entry points, the phase outcomes, and a result line. It lists the first 20 findings and counts the rest, as in "68 more findings not shown; --all-findings or --json lists every finding"; `--all-findings` lists them all. Piped or redirected, it is plain text without colour; on a terminal it gets the layout described under [Terminal output](#terminal-output). Errors are shown by their first line only; the JSON report keeps the full error.
 
 `--json` prints a report with `"schemaVersion": 1`. The version is raised on any change that removes, renames or retypes a field; new fields may appear without a version change, and so may new values of an enumerated field, such as the `invalid-ignore` finding kind. Top-level fields:
 
@@ -227,7 +235,7 @@ The text report shows the diff scope, a coverage summary, the findings most seve
 - `git`: base, merge base, head, and whether the tree had uncommitted changes
 - `scope`: changed source and test files, ignored files with their reason, notes
 - `phases`: one entry per phase, with its status, reason, the full error as `detail` when it failed, budget and time spent, and `timings`, where that time went: for mutation, Stryker's start and dry run (`strykerStartMs`, with the dry run's own test time as `dryRunNetMs`), and the time after it over the mutants run (`mutantsMs`, `mutantsRun`, `msPerMutant`); for faults, the discovery run (`discoveryMs`) and the faulted runs that finished (`faultRuns`, `faultRunsMs`, `msPerFaultRun`). The text report shows the same breakdown under Phases.
-- `findings`: every finding that counts, with its severity and its mutation or fault detail; a mutation finding carries the `statement` hash a baseline entry would use
+- `findings`: every finding that counts, with its severity and its mutation or fault detail; a mutation finding carries the `statement` hash a baseline entry would use. A fault finding's `fault` carries `kind`, `verdict`, `path`, the faulted `tests`, `reachedFrom`, the changed functions that put the faulted calls in scope as `"file function"` (the site's own function when the call itself changed, the changed callers when the site is an unchanged wrapper), and `notFaultedFrom`, changed callers that reach the site through none of the faulted tests
 - `ignored`: every finding the baseline or an inline comment set aside, with `ignoredBy` (`baseline` or `inline`) and `ignoreReason`
 - `baseline`: whether `bruise-baseline.json` exists, its number of entries, and its `stale` and `notEvaluated` entries; `null` when the run stopped before reading it
 - `coverage`: `checked` counts, plus `invalid`, `invalidExcluded` (`true` when at least one valid mutant ran, so the invalid mutants are listed but do not make the run `partial`), `skipped`, `inconclusive` and `conflicts`, each item with its reason, and `notTested`: per file, the mutants that were generated but not tested before the budget ran out (`mutants` is `null` for a file whose mutants were never planned); each of those mutants is also in `skipped`
@@ -295,6 +303,7 @@ Gaps that make a run partial include call sites over the preset cap, a budget th
 
 - Vitest and TypeScript only.
 - Under the `happy-dom` environment the fault phase is inconclusive: happy-dom replaces `fetch` and `Request` with its own, which bruise cannot fault yet. Custom environments that replace them are reported as a patch.
+- The verdicts of the faults that answer at once judge the error that failed the test. A test that catches the fault's error itself, for example with `expect(...).rejects`, and then fails its own assertion, counts as the test's own check. Code that catches the error and throws the same object again counts as letting it escape.
 - Under `malformed-json`, a parse is seen through the global `JSON.parse`. A parser that does not go through it, such as a streaming JSON library, leaves the site inconclusive.
 - Under `http-500`, a status read counts once it happens; a body read before it makes the finding even when the status is checked later. A body read with `read()` alone, without a `readable` listener, is not seen. What the code does with the response after its test body ended is not seen.
 - A test file that replaces `fetch` or the `http` entry points itself, for example with a mock library, prevents faulting for the calls made under it. It is reported as a conflict.

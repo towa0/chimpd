@@ -135,8 +135,8 @@ export async function runCli(argv: readonly string[], io: CliIo, deps: Partial<C
     options.json
       ? renderJson(result, exit)
       : fancy
-        ? renderFancyText(result, exit, theme, terminal.stdoutColumns())
-        : renderText(result, exit),
+        ? renderFancyText(result, { ...exit, allFindings: options.allFindings }, theme, terminal.stdoutColumns())
+        : renderText(result, { ...exit, allFindings: options.allFindings }),
   );
   return exitCodeOf(result, exit);
 }

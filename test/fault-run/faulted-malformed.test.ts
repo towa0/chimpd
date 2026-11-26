@@ -7,6 +7,7 @@ import { pristineFingerprints, type Fingerprints } from '../../src/fault-recon/c
 import { discoverCallSites } from '../../src/fault-run/discover.js';
 import { runFaultedSite } from '../../src/fault-run/faulted.js';
 import type { CallSite, Discovery } from '../../src/fault-run/types.js';
+import { failureLike } from '../helpers/failure-evidence.js';
 import { createSampleApp, history, type SampleApp } from '../helpers/sample-app.js';
 
 const TIMEOUT_MS = 60_000;
@@ -38,10 +39,10 @@ function siteAt(file: string, snippet: string): CallSite {
 
 describe('malformed-json runs on the sample app', () => {
   it.each([
-    ['a fetch whose caller catches the parse error', 'src/clients/inventory.ts', 'await fetch(', { attempts: 1, testOutcome: 'passed', jsonParsed: true }],
-    ['a fetch whose parse error fails the test', 'src/clients/profile.ts', 'await fetch(', { attempts: 1, testOutcome: 'failed', jsonParsed: true }],
-    ['an unawaited parse whose rejection escapes', 'src/clients/audit.ts', 'void fetch(', { attempts: 1, errorEscaped: true, jsonParsed: true }],
-    ['a search that catches the parse error and tries again', 'src/clients/search.ts', 'await fetch(', { attempts: 3, testOutcome: 'passed', errorEscaped: false, jsonParsed: true }],
+    ['a fetch whose caller catches the parse error', 'src/clients/inventory.ts', 'await fetch(', { attempts: 1, testOutcome: 'passed', failure: null, jsonParsed: true }],
+    ['a fetch whose parse error fails the test', 'src/clients/profile.ts', 'await fetch(', { attempts: 1, testOutcome: 'failed', failure: failureLike({ kind: 'fault-escaped', via: 'test' }), jsonParsed: true }],
+    ['an unawaited parse whose rejection escapes', 'src/clients/audit.ts', 'void fetch(', { attempts: 1, failure: failureLike({ kind: 'fault-escaped', via: 'unhandled' }), jsonParsed: true }],
+    ['a search that catches the parse error and tries again', 'src/clients/search.ts', 'await fetch(', { attempts: 3, testOutcome: 'passed', failure: null, jsonParsed: true }],
     ['an http request that never parses the body', 'src/clients/ledger.ts', 'http.request(', { attempts: 1, jsonParsed: false }],
     ['a fire-and-forget fetch that never parses the body', 'src/telemetry.ts', 'void fetch(', { attempts: 1, testOutcome: 'passed', jsonParsed: false }],
   ] as const)(

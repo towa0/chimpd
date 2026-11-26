@@ -8,6 +8,8 @@ export interface CliOptions {
   readonly base: string | undefined;
   readonly json: boolean;
   readonly strict: boolean;
+  /** List every finding in the text report instead of the first FINDINGS_SHOWN. */
+  readonly allFindings: boolean;
   readonly verbose: boolean;
   readonly seed: number | undefined;
   readonly cwd: string;
@@ -38,7 +40,7 @@ export type ParsedArgs =
 
 export const USAGE = [
   'Usage: bruise run --level poke|prod|shake [--plan] [--base <ref>] [--json] [--strict] [--verbose] [--seed <n>] [--cwd <dir>]',
-  '                  [--color | --no-color] [--no-banner]',
+  '                  [--all-findings] [--color | --no-color] [--no-banner]',
   '       bruise baseline --level poke|prod|shake [--prune] [--base <ref>] [--verbose] [--seed <n>] [--cwd <dir>]',
   '',
   'run checks the branch; baseline runs the same check and writes its findings to bruise-baseline.json.',
@@ -50,6 +52,7 @@ export const USAGE = [
   '  --base <ref>    the ref the branch is compared against; default origin/main',
   '  --json          run only: print the versioned JSON report instead of text',
   '  --strict        run only: exit 2 whenever anything in scope was not checked',
+  '  --all-findings  run only: list every finding in the text report, not only the first 20',
   "  --verbose       pass on what the project's own tests print, to stderr",
   '  --seed <n>      breaks ties when a cap or the budget forces a choice; picked and printed when omitted',
   '  --cwd <dir>     the project to check; default the current directory',
@@ -107,7 +110,7 @@ export function parseCliArgs(argv: readonly string[], defaultCwd: string): Parse
   const cwd = path.resolve(defaultCwd, values.cwd ?? '.');
 
   if (command === 'baseline') {
-    const runOnly = (['plan', 'json', 'strict', 'color', 'no-color', 'no-banner'] as const).find((name) => values[name] === true);
+    const runOnly = (['plan', 'json', 'strict', 'all-findings', 'color', 'no-color', 'no-banner'] as const).find((name) => values[name] === true);
     if (runOnly !== undefined) return { kind: 'error', message: `--${runOnly} only applies to bruise run` };
     return {
       kind: 'baseline',
@@ -124,6 +127,7 @@ export function parseCliArgs(argv: readonly string[], defaultCwd: string): Parse
       base: values.base,
       json: values.json === true,
       strict: values.strict === true,
+      allFindings: values['all-findings'] === true,
       verbose: values.verbose === true,
       seed,
       cwd,
@@ -144,6 +148,7 @@ function parse(argv: readonly string[]) {
       base: { type: 'string' },
       json: { type: 'boolean' },
       strict: { type: 'boolean' },
+      'all-findings': { type: 'boolean' },
       verbose: { type: 'boolean' },
       seed: { type: 'string' },
       cwd: { type: 'string' },

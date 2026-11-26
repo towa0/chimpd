@@ -23,7 +23,7 @@ export interface ReachingTest {
   /** Duration of the test body in the unfaulted run. */
   readonly durationMs: number;
   readonly calls: number;
-  /** The changed functions this test's calls went through, for a site outside the diff; empty for a call made in changed code. */
+  /** The changed functions that put this test's calls in scope: the site's own function when the call itself is changed code. */
   readonly reachedFrom: readonly string[];
 }
 
@@ -38,8 +38,9 @@ export interface CallSite {
   /** Every project frame seen under this site, innermost first. */
   readonly frames: readonly ProjectFrame[];
   /**
-   * For a site outside the diff, such as a client wrapper, the changed functions its in-scope calls went
-   * through, as "file function"; empty when the call itself is in changed code.
+   * The changed functions that put the site's calls in scope, as "file function": for a site outside the
+   * diff, such as a client wrapper, the changed callers its calls went through; for a call made in changed
+   * code, the site's own function.
    */
   readonly reachedFrom: readonly string[];
   readonly scopeKind: ScopeKind;

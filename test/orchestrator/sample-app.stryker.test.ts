@@ -46,10 +46,9 @@ it(
       ['hang-no-timeout', 'blackhole', 'src/clients/ledger.ts', 'postLedgerEntry'],
       ['hang-no-timeout', 'blackhole', 'src/clients/profile.ts', 'fetchProfile'],
       ['error-status-ignored', 'http-500', 'src/clients/inventory.ts', 'checkStock'],
-      ['error-status-mishandled', 'http-500', 'src/clients/ledger.ts', 'postLedgerEntry'],
-      ['error-status-mishandled', 'http-500', 'src/clients/profile.ts', 'fetchProfile'],
       ['fire-and-forget', 'blackhole', 'src/telemetry.ts', 'trackEvent'],
     ]);
+    for (const finding of faults) expect(finding.fault?.reachedFrom).toEqual([`${finding.file} ${finding.functionName}`]);
     expect(result.conflicts).toEqual([{ testFile: 'test/notifications.test.ts', patched: ['fetch'] }]);
     expect(result.status).toBe('partial');
     expect(exitCodeOf(result)).toBe(1);

@@ -20,14 +20,13 @@ export interface Severity {
 
 /**
  * What a finding costs before its location is weighed. A call that can hang forever outranks a
- * mutant that survived, which outranks code no test runs at all, which outranks a slow deadline.
+ * mutant that survived, which outranks code no test runs at all, which outranks a call nothing waits for.
  */
 export const BASE_SCORES: Readonly<Record<FindingKind, number>> = {
   'hang-no-timeout': 70,
   'abort-mishandled': 65,
   'refusal-mishandled': 60,
   survived: 55,
-  'timeout-exceeds-budget': 50,
   'no-coverage': 45,
   'fire-and-forget': 40,
   'invalid-ignore': 50,

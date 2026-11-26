@@ -1,4 +1,4 @@
-import { firstErrorLine, type FaultKind, type MutantRecord, type Preset } from '../core/index.js';
+import { firstErrorLine, otherCallers, type FaultKind, type MutantRecord, type Preset } from '../core/index.js';
 import type { CallSite, CallSiteResult, FaultRunResult, SkipReason } from '../fault-run/index.js';
 import { mutationFindingKind, priorOf, severityOf } from '../severity/index.js';
 import type { MutationResult } from '../stryker-adapter/index.js';
@@ -137,7 +137,8 @@ function skipReason(reason: SkipReason, preset: Preset): string {
 }
 
 function siteItem(site: CallSite, reason: string, kind: FaultKind | null): Item {
-  const via = site.reachedFrom.length === 0 ? '' : `; reached from changed code: ${site.reachedFrom.join(', ')}`;
+  const callers = otherCallers(site.reachedFrom, site);
+  const via = callers.length === 0 ? '' : `; reached from changed code: ${callers.join(', ')}`;
   const item: Item = { source: 'fault', file: site.file, line: site.line, reason: `${reason}${via}` };
   return kind === null ? item : { ...item, faultKind: kind };
 }

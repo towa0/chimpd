@@ -8,16 +8,16 @@ import type { InterceptionPath } from './interception.js';
 
 export type InjectedEvent = Pick<HttpRequestEvent, 'request' | 'controller' | 'initiator'>;
 
-/** Answers one targeted call at once, through the event's controller. */
-export type Injector = (event: InjectedEvent) => void;
+/** Answers one targeted call at once, through the event's controller; returns the error it raised, if it raised one. */
+export type Injector = (event: InjectedEvent) => Error | undefined;
 
 export interface InjectionOptions {
   /** Decides per call whether it gets the fault; a call that does not reaches the network untouched. */
   readonly shouldInject: (metadata: CallMetadata | null) => boolean;
   readonly inject: Injector;
   readonly onCall?: (metadata: CallMetadata) => void;
-  /** Sees every call that got the fault, after it was answered. */
-  readonly onInjected?: (event: InjectedEvent, metadata: CallMetadata | null) => void;
+  /** Sees every call that got the fault, after it was answered, with the error the fault raised, if any. */
+  readonly onInjected?: (event: InjectedEvent, metadata: CallMetadata | null, raised: Error | undefined) => void;
   /** Watches what the code does with the response of each faulted call; the watch starts before the code sees it. */
   readonly onResponse?: (metadata: CallMetadata, watch: ResponseWatch) => void;
 }
@@ -38,8 +38,8 @@ export function installInjection(paths: readonly InterceptionPath[], options: In
     interceptor.on('request', (event) => {
       const metadata = metadataFor(event.initiator);
       if (!options.shouldInject(metadata)) return;
-      options.inject(event);
-      options.onInjected?.(event, metadata);
+      const raised = options.inject(event);
+      options.onInjected?.(event, metadata, raised);
     });
   }
   const { onResponse } = options;

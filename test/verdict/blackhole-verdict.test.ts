@@ -13,6 +13,7 @@ const base: BlackHoleObservation = {
   testOutcome: 'passed',
   errorEscaped: false,
   deadlineHit: false,
+  faultWindowMs: 2000,
 };
 
 type Row = [string, Partial<BlackHoleObservation>, Partial<BlackHoleVerdict>];
@@ -49,24 +50,49 @@ const rows: Row[] = [
     { verdict: 'hang', findingKind: 'hang-no-timeout' },
   ],
   [
-    'signal with tagged deadline never fired, deadline hit',
-    { signalAttached: true, signalDeadlineMs: 30_000, deadlineHit: true, testOutcome: 'failed' },
-    { verdict: 'long-timeout', findingKind: 'timeout-exceeds-budget', deadlineMs: 30_000 },
+    'a 5 s signal timeout outlasts the 2 s fault window: not observed, not a finding',
+    { signalAttached: true, signalDeadlineMs: 5000, deadlineHit: true, testOutcome: 'failed' },
+    {
+      verdict: 'inconclusive',
+      findingKind: null,
+      deadlineMs: 5000,
+      reason: "the code's own timeout (5000 ms) is longer than the fault window (2000 ms); not observed",
+    },
   ],
   [
     'signal with unknown deadline never fired, deadline hit',
     { signalAttached: true, deadlineHit: true, testOutcome: 'failed' },
-    { verdict: 'long-timeout', findingKind: 'timeout-exceeds-budget', deadlineMs: null },
+    {
+      verdict: 'inconclusive',
+      findingKind: null,
+      deadlineMs: null,
+      reason: 'the code has a timeout of its own whose length is unknown, and it did not fire within the fault window (2000 ms); not observed',
+    },
   ],
   [
-    'socket timeout never fired, deadline hit',
+    'socket timeout outlasts the fault window, deadline hit',
     { socketTimeoutMs: 60_000, deadlineHit: true, testOutcome: 'failed' },
-    { verdict: 'long-timeout', findingKind: 'timeout-exceeds-budget', deadlineMs: 60_000 },
+    {
+      verdict: 'inconclusive',
+      findingKind: null,
+      deadlineMs: 60_000,
+      reason: "the code's own timeout (60000 ms) is longer than the fault window (2000 ms); not observed",
+    },
+  ],
+  [
+    'a timeout inside the fault window that did not fire',
+    { signalAttached: true, signalDeadlineMs: 1500, deadlineHit: true },
+    {
+      verdict: 'inconclusive',
+      findingKind: null,
+      deadlineMs: 1500,
+      reason: "the code's own timeout (1500 ms) did not fire within the fault window (2000 ms); not observed",
+    },
   ],
   [
     'signal and socket timeout both set, deadline hit: shortest is reported',
     { signalAttached: true, signalDeadlineMs: 30_000, socketTimeoutMs: 20_000, deadlineHit: true },
-    { verdict: 'long-timeout', deadlineMs: 20_000 },
+    { verdict: 'inconclusive', deadlineMs: 20_000 },
   ],
   [
     'signal undeterminable, deadline hit',
@@ -76,7 +102,7 @@ const rows: Row[] = [
   [
     'signal undeterminable but socket timeout set, deadline hit',
     { signalAttached: null, socketTimeoutMs: 9000, deadlineHit: true },
-    { verdict: 'long-timeout', findingKind: 'timeout-exceeds-budget', deadlineMs: 9000 },
+    { verdict: 'inconclusive', findingKind: null, deadlineMs: 9000 },
   ],
   [
     'manual destroy, test passed',

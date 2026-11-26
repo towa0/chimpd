@@ -37,7 +37,7 @@ describe('malformed-json contract', () => {
   beforeEach(() => {
     hits = 0;
     parses = 0;
-    restore = watchJsonParse(() => (parses += 1));
+    restore = watchJsonParse(MALFORMED_BODY, { onParse: () => (parses += 1) });
     interception = installInjection(['fetch', 'client-request'], {
       shouldInject: (metadata) => metadata !== null && /at held(Fetch|Request) /.test(metadata.stack),
       inject: respondWithMalformedJson,

@@ -3,6 +3,7 @@ import type { Vite } from 'vitest/node';
 import {
   firstErrorLine,
   type BlackHoleObservation,
+  type FailureEvidence,
   type FaultKind,
   type InjectedObservation,
   type ResponseUse,
@@ -77,7 +78,7 @@ function raiseTestTimeout(deadlineMs: number): Vite.Plugin {
 
 type BodyEnd = Extract<RuntimeEvent, { type: 'body-end' }>;
 
-function toObservation(held: HeldObservation, end: BodyEnd, errorEscaped: boolean): BlackHoleObservation | null {
+function toObservation(held: HeldObservation, end: BodyEnd, errorEscaped: boolean, faultWindowMs: number): BlackHoleObservation | null {
   if (held.requestState === 'released') return null;
   return {
     metadataCaptured: true,
@@ -90,6 +91,7 @@ function toObservation(held: HeldObservation, end: BodyEnd, errorEscaped: boolea
     testOutcome: end.outcome,
     errorEscaped,
     deadlineHit: held.deadlineHit,
+    faultWindowMs,
   };
 }
 
@@ -153,10 +155,14 @@ export async function runFaultedSite(request: SiteRunRequest): Promise<SiteRun> 
   const started = new Set<string>();
   const ended = new Map<string, BodyEnd>();
   const patched = new Map<string, readonly string[]>();
+  const lateEscapes = new Map<string, FailureEvidence>();
   let patchedBeforeSetup: Extract<RuntimeEvent, { type: 'conflict' }> | null = null;
   for (const event of run.events) {
     if (event.type === 'body-start') started.add(event.testId);
     else if (event.type === 'body-end') ended.set(event.testId, event);
+    else if (event.type === 'escaped') {
+      if (!lateEscapes.has(event.testId)) lateEscapes.set(event.testId, event.failure);
+    }
     else if (event.type === 'conflict') {
       if (event.testId === null) patchedBeforeSetup = event;
       else patched.set(event.testId, event.patched);
@@ -190,7 +196,7 @@ export async function runFaultedSite(request: SiteRunRequest): Promise<SiteRun> 
       attempts: injections.length,
       errorReachedCaller: injections.every((call) => call.errorReachedCaller),
       testOutcome: end.outcome,
-      errorEscaped,
+      failure: lateEscapes.get(end.testId) ?? end.failure ?? null,
       response: responseOf(end),
       jsonParsed: kind === 'malformed-json' ? (end.jsonParsed ?? false) : null,
     };
@@ -205,7 +211,7 @@ export async function runFaultedSite(request: SiteRunRequest): Promise<SiteRun> 
       const observations =
         usable === undefined || kind !== 'blackhole'
           ? []
-          : usable.observations.flatMap((held) => toObservation(held, usable, errorEscaped) ?? []);
+          : usable.observations.flatMap((held) => toObservation(held, usable, errorEscaped, request.deadlineMs) ?? []);
       return { test, observations, injected: usable === undefined ? null : injectedOf(usable), problem };
     }),
   };

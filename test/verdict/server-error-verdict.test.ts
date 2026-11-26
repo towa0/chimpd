@@ -1,18 +1,25 @@
 import { describe, expect, it } from 'vitest';
 import type { InjectedObservation, InjectedVerdict, ResponseUse } from '../../src/core/index.js';
 import { classifyInjected, classifyServerError } from '../../src/verdict/index.js';
+import { FAILURE_KINDS, failureOf } from '../helpers/failure-evidence.js';
 
 const checked: ResponseUse = { statusRead: true, bodyConsumed: false, bodyBeforeStatus: false };
+const unused: ResponseUse = { statusRead: false, bodyConsumed: false, bodyBeforeStatus: false };
+const bodyFirst: ResponseUse = { statusRead: false, bodyConsumed: true, bodyBeforeStatus: true };
 
 const base: InjectedObservation = {
   kind: 'http-500',
   attempts: 1,
   errorReachedCaller: true,
   testOutcome: 'passed',
-  errorEscaped: false,
+  failure: null,
   response: checked,
   jsonParsed: null,
 };
+
+const ownError = failureOf('raised-by-project', 'Error: rate request failed with 500');
+const assertion = failureOf('raised-by-test', 'AssertionError: expected 0 to be 200');
+const PARSE_ERROR = 'SyntaxError: Unexpected token \'I\', "Internal S"... is not valid JSON';
 
 type Row = [string, Partial<InjectedObservation>, InjectedVerdict];
 
@@ -37,8 +44,45 @@ const rows: Row[] = [
     { verdict: 'status-checked', findingKind: null, reason: 'the code checked the status of the 500 response and the test passed' },
   ],
   [
+    'status checked, then the code raised its own error and failed the test',
+    { testOutcome: 'failed', failure: ownError },
+    {
+      verdict: 'status-checked',
+      findingKind: null,
+      reason: 'the code checked the status of the 500 response; the code raised its own error at src/rates.ts:7: Error: rate request failed with 500',
+    },
+  ],
+  [
+    'status checked, then the test failed on its own assertion',
+    { testOutcome: 'failed', failure: assertion },
+    {
+      verdict: 'status-checked',
+      findingKind: null,
+      reason: 'the code checked the status of the 500 response; the test failed on its own check: AssertionError: expected 0 to be 200',
+    },
+  ],
+  [
+    'status read, then the 500 body parsed as JSON and its parse error failed the test',
+    { testOutcome: 'failed', response: { statusRead: true, bodyConsumed: true, bodyBeforeStatus: false }, failure: failureOf('fault-escaped', PARSE_ERROR) },
+    {
+      verdict: 'status-mishandled',
+      findingKind: 'error-status-mishandled',
+      reason: `the error from parsing the body of the 500 response as JSON escaped the code and failed the test: ${PARSE_ERROR}`,
+    },
+  ],
+  [
+    'status checked, the test failed on an error that cannot be attributed',
+    { testOutcome: 'failed', failure: failureOf('unattributed', 'Error: Test timed out in 5000ms.') },
+    {
+      verdict: 'inconclusive',
+      findingKind: null,
+      reason:
+        'the test failed on an error that is neither an error from the 500 response nor raised by project or test code: Error: Test timed out in 5000ms.',
+    },
+  ],
+  [
     'body consumed without a status check, test passed',
-    { response: { statusRead: false, bodyConsumed: true, bodyBeforeStatus: true } },
+    { response: bodyFirst },
     {
       verdict: 'status-ignored',
       findingKind: 'error-status-ignored',
@@ -47,7 +91,7 @@ const rows: Row[] = [
   ],
   [
     'body consumed first and the status read later, test failed',
-    { response: { statusRead: true, bodyConsumed: true, bodyBeforeStatus: true }, testOutcome: 'failed' },
+    { response: { statusRead: true, bodyConsumed: true, bodyBeforeStatus: true }, testOutcome: 'failed', failure: assertion },
     {
       verdict: 'status-ignored',
       findingKind: 'error-status-ignored',
@@ -55,40 +99,17 @@ const rows: Row[] = [
     },
   ],
   [
-    'body consumed without a status check and an error escaped',
-    { response: { statusRead: false, bodyConsumed: true, bodyBeforeStatus: true }, errorEscaped: true },
+    'response not used, test failed on its own assertion',
+    { response: unused, testOutcome: 'failed', failure: assertion },
     {
-      verdict: 'status-ignored',
-      findingKind: 'error-status-ignored',
-      reason: 'the code consumed the body of the 500 response before checking res.ok or res.status',
+      verdict: 'response-unused',
+      findingKind: null,
+      reason: 'the code did not use the 500 response; the test failed on its own check: AssertionError: expected 0 to be 200',
     },
-  ],
-  [
-    'status checked, test failed',
-    { testOutcome: 'failed' },
-    {
-      verdict: 'status-mishandled',
-      findingKind: 'error-status-mishandled',
-      reason: 'the code checked the status of the 500 response, but the test failed',
-    },
-  ],
-  [
-    'status checked, an error escaped',
-    { errorEscaped: true },
-    {
-      verdict: 'status-mishandled',
-      findingKind: 'error-status-mishandled',
-      reason: 'an unhandled rejection or error event escaped after the 500 response',
-    },
-  ],
-  [
-    'response not used, test failed',
-    { response: { statusRead: false, bodyConsumed: false, bodyBeforeStatus: false }, testOutcome: 'failed' },
-    { verdict: 'status-mishandled', findingKind: 'error-status-mishandled', reason: 'the test failed after the 500 response' },
   ],
   [
     'response not used, test passed',
-    { response: { statusRead: false, bodyConsumed: false, bodyBeforeStatus: false } },
+    { response: unused },
     { verdict: 'response-unused', findingKind: null, reason: 'the code did not use the 500 response and the test passed' },
   ],
   [
@@ -119,10 +140,17 @@ describe('http-500 verdict table', () => {
   });
 
   it('reports a body consumed before the status whatever the test did', () => {
-    const response: ResponseUse = { statusRead: false, bodyConsumed: true, bodyBeforeStatus: true };
-    for (const testOutcome of ['passed', 'failed'] as const) {
-      for (const errorEscaped of [true, false]) {
-        expect(classifyServerError({ ...base, response, testOutcome, errorEscaped }).findingKind).toBe('error-status-ignored');
+    for (const kind of FAILURE_KINDS) {
+      const failure = kind === null ? null : failureOf(kind, PARSE_ERROR);
+      expect(classifyServerError({ ...base, response: bodyFirst, failure }).findingKind).toBe('error-status-ignored');
+    }
+  });
+
+  it('calls a checked or unused response mishandled exactly when an error from the 500 body escaped', () => {
+    for (const response of [checked, unused]) {
+      for (const kind of FAILURE_KINDS) {
+        const failure = kind === null ? null : failureOf(kind, PARSE_ERROR);
+        expect(classifyServerError({ ...base, response, failure }).findingKind !== null).toBe(kind === 'fault-escaped');
       }
     }
   });

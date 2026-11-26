@@ -82,16 +82,11 @@ describe('fault run on the sample app', () => {
       ]);
       expect(verdicts(serverError)).toEqual({
         'src/clients/inventory.ts checkStock': 'status-ignored',
-        'src/clients/ledger.ts postLedgerEntry': 'status-mishandled',
-        'src/clients/profile.ts fetchProfile': 'status-mishandled',
+        'src/clients/ledger.ts postLedgerEntry': 'status-checked',
+        'src/clients/profile.ts fetchProfile': 'status-checked',
         'src/telemetry.ts trackEvent': 'response-unused',
       });
-      expect(serverError.map((entry) => entry.findingKind)).toEqual([
-        'error-status-ignored',
-        'error-status-mishandled',
-        'error-status-mishandled',
-        null,
-      ]);
+      expect(serverError.map((entry) => entry.findingKind)).toEqual(['error-status-ignored', null, null, null]);
       expect(held.map((entry) => entry.tests.map(({ test }) => test.name))).toEqual([
         ['renders a product page for the requested sku'],
         ['posts a ledger entry'],

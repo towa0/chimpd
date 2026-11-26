@@ -54,7 +54,6 @@ export interface Preset {
   readonly maxFaultedCallSites: number;
   readonly faultKinds: readonly FaultKind[];
   readonly testsPerCallSite: number;
-  readonly findingsShown: number;
 }
 
 const MINUTE_MS = 60_000;
@@ -74,7 +73,6 @@ export const PRESETS: Readonly<Record<Intensity, Preset>> = {
     maxFaultedCallSites: 3,
     faultKinds: ['blackhole'],
     testsPerCallSite: 1,
-    findingsShown: 3,
   },
   2: {
     intensity: 2,
@@ -90,7 +88,6 @@ export const PRESETS: Readonly<Record<Intensity, Preset>> = {
     maxFaultedCallSites: 8,
     faultKinds: ['blackhole', 'http-500'],
     testsPerCallSite: 2,
-    findingsShown: 5,
   },
   3: {
     intensity: 3,
@@ -106,7 +103,6 @@ export const PRESETS: Readonly<Record<Intensity, Preset>> = {
     maxFaultedCallSites: 20,
     faultKinds: ['blackhole', 'http-500', 'malformed-json', 'connection-refused'],
     testsPerCallSite: 3,
-    findingsShown: 5,
   },
 };
 

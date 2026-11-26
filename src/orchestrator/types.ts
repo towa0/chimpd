@@ -44,7 +44,7 @@ export interface FaultDetail {
   readonly verdict: FaultVerdictKind;
   readonly path: 'fetch' | 'http';
   readonly tests: readonly string[];
-  /** For a site outside the diff, the changed functions the faulted tests reached it through, as "file function". */
+  /** The changed functions that put the faulted calls in scope, as "file function": the site's own function when the call itself changed, else the changed callers a wrapper was reached through. */
   readonly reachedFrom: readonly string[];
   /** Changed functions that also reach the site, but through none of the faulted tests. */
   readonly notFaultedFrom: readonly string[];

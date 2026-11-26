@@ -234,3 +234,81 @@ export function addWrapperModule(repo: TempRepo): void {
   repo.branch('origin/main', repo.commit('Add a fetch wrapper and its callers'));
   repo.edit('src/statuses.ts', '`${baseUrl}/statuses`, 300', '`${baseUrl}/statuses?limit=500`, 300');
 }
+
+const EVIDENCE_SOURCE = [
+  'export async function checkedRate(baseUrl: string): Promise<number> {',
+  '  const response = await fetch(`${baseUrl}/checked`);',
+  '  if (!response.ok) {',
+  '    throw new Error(`rate request failed with ${response.status}`);',
+  '  }',
+  '  return ((await response.json()) as { rate: number }).rate;',
+  '}',
+  '',
+  'export async function fallbackRate(baseUrl: string): Promise<number> {',
+  '  try {',
+  '    const response = await fetch(`${baseUrl}/fallback`);',
+  '    return ((await response.json()) as { rate: number }).rate;',
+  '  } catch {',
+  '    return 1;',
+  '  }',
+  '}',
+  '',
+  'export async function escapingRate(baseUrl: string): Promise<number> {',
+  '  const response = await fetch(`${baseUrl}/escaping`);',
+  '  return ((await response.json()) as { rate: number }).rate;',
+  '}',
+  '',
+  'export async function wrappedRate(baseUrl: string): Promise<number> {',
+  '  const response = await fetch(`${baseUrl}/wrapped`);',
+  '  try {',
+  '    return ((await response.json()) as { rate: number }).rate;',
+  '  } catch (error) {',
+  "    throw new Error('the rate payload could not be read', { cause: error });",
+  '  }',
+  '}',
+  '',
+].join('\n');
+
+const EVIDENCE_TEST = [
+  "import { afterAll, beforeAll, expect, it } from 'vitest';",
+  "import { checkedRate, escapingRate, fallbackRate, wrappedRate } from '../src/evidence.js';",
+  "import { startServer, type TestServer } from './helpers/server.js';",
+  '',
+  'let server: TestServer;',
+  '',
+  'beforeAll(async () => {',
+  '  server = await startServer({',
+  "    'GET /checked': { body: { rate: 1.5 } },",
+  "    'GET /fallback': { body: { rate: 1.5 } },",
+  "    'GET /escaping': { body: { rate: 1.5 } },",
+  "    'GET /wrapped': { body: { rate: 1.5 } },",
+  '  });',
+  '});',
+  'afterAll(() => server.close());',
+  '',
+  "it('loads a checked rate', async () => {",
+  '  expect(await checkedRate(server.url)).toBe(1.5);',
+  '});',
+  '',
+  "it('loads a rate with a fallback', async () => {",
+  '  expect(await fallbackRate(server.url)).toBe(1.5);',
+  '});',
+  '',
+  "it('loads a rate without handling', async () => {",
+  '  expect(await escapingRate(server.url)).toBe(1.5);',
+  '});',
+  '',
+  "it('loads a rate that wraps a bad payload', async () => {",
+  '  expect(await wrappedRate(server.url)).toBe(1.5);',
+  '});',
+  '',
+].join('\n');
+
+/**
+ * Four functions whose happy-path tests fail under any fault, each for a different reason: a status check
+ * that throws its own error, a catch that returns a fallback, nothing at all, and a parse wrapped in its own error.
+ */
+export function addEvidenceModule(repo: TempRepo): void {
+  repo.write('src/evidence.ts', EVIDENCE_SOURCE);
+  repo.write('test/evidence.test.ts', EVIDENCE_TEST);
+}

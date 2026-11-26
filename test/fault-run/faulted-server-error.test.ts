@@ -7,6 +7,7 @@ import { pristineFingerprints, type Fingerprints } from '../../src/fault-recon/c
 import { discoverCallSites } from '../../src/fault-run/discover.js';
 import { runFaultedSite } from '../../src/fault-run/faulted.js';
 import type { CallSite, Discovery } from '../../src/fault-run/types.js';
+import { failureLike } from '../helpers/failure-evidence.js';
 import { createSampleApp, history, type SampleApp } from '../helpers/sample-app.js';
 
 const TIMEOUT_MS = 60_000;
@@ -42,12 +43,12 @@ function siteAt(file: string, snippet: string): CallSite {
 
 describe('http-500 runs on the sample app', () => {
   it.each([
-    ['a fetch whose body is parsed without a status check', 'src/clients/inventory.ts', 'await fetch(', { attempts: 1, testOutcome: 'passed', response: bodyFirst }],
-    ['a fetch whose status check throws into the test', 'src/clients/profile.ts', 'await fetch(', { attempts: 1, testOutcome: 'failed', response: checked }],
-    ['an http request that discards the body and returns the status', 'src/clients/ledger.ts', 'http.request(', { attempts: 1, testOutcome: 'failed', response: checked }],
-    ['a fire-and-forget fetch that never looks at the response', 'src/telemetry.ts', 'void fetch(', { attempts: 1, testOutcome: 'passed', response: unused }],
-    ['an unawaited parse whose rejection escapes', 'src/clients/audit.ts', 'void fetch(', { attempts: 1, errorEscaped: true, response: bodyFirst }],
-    ['a search that checks the status and tries again', 'src/clients/search.ts', 'await fetch(', { attempts: 3, testOutcome: 'passed', errorEscaped: false, response: checked }],
+    ['a fetch whose body is parsed without a status check', 'src/clients/inventory.ts', 'await fetch(', { attempts: 1, testOutcome: 'passed', failure: null, response: bodyFirst }],
+    ['a fetch whose status check throws into the test', 'src/clients/profile.ts', 'await fetch(', { attempts: 1, testOutcome: 'failed', failure: failureLike({ kind: 'raised-by-project', via: 'test', error: 'Error: profile request failed with 500' }), response: checked }],
+    ['an http request that discards the body and returns the status', 'src/clients/ledger.ts', 'http.request(', { attempts: 1, testOutcome: 'failed', failure: failureLike({ kind: 'raised-by-test', via: 'test' }), response: checked }],
+    ['a fire-and-forget fetch that never looks at the response', 'src/telemetry.ts', 'void fetch(', { attempts: 1, testOutcome: 'passed', failure: null, response: unused }],
+    ['an unawaited parse whose rejection escapes', 'src/clients/audit.ts', 'void fetch(', { attempts: 1, failure: failureLike({ kind: 'fault-escaped', via: 'unhandled' }), response: bodyFirst }],
+    ['a search that checks the status and tries again', 'src/clients/search.ts', 'await fetch(', { attempts: 3, testOutcome: 'passed', failure: null, response: checked }],
   ] as const)(
     'observes %s',
     async (_label, file, snippet, expected) => {

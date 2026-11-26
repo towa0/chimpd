@@ -30,6 +30,7 @@ const handled: BlackHoleObservation = {
   testOutcome: 'passed',
   errorEscaped: false,
   deadlineHit: false,
+  faultWindowMs: 2000,
 };
 const mishandled: BlackHoleObservation = { ...handled, testOutcome: 'failed' };
 const pending: BlackHoleObservation = {
@@ -61,20 +62,29 @@ const refusedHandled: InjectedObservation = {
   attempts: 1,
   errorReachedCaller: true,
   testOutcome: 'passed',
-  errorEscaped: false,
+  failure: null,
   response: null,
   jsonParsed: null,
 };
-const refusedFailed: InjectedObservation = { ...refusedHandled, testOutcome: 'failed' };
+const refusedFailed: InjectedObservation = {
+  ...refusedHandled,
+  testOutcome: 'failed',
+  failure: { kind: 'fault-escaped', via: 'test', error: 'TypeError: fetch failed', raisedAt: null },
+};
+const refusedCaught: InjectedObservation = {
+  ...refusedHandled,
+  testOutcome: 'failed',
+  failure: { kind: 'raised-by-test', via: 'test', error: 'AssertionError: expected 1 to be 1.5', raisedAt: null },
+};
 
 describe('combineSite', () => {
   it.each([
     ['handled-timeout', [handled], null],
     ['timeout-mishandled', [mishandled], 'abort-mishandled'],
     ['hang', [hang], 'hang-no-timeout'],
-    ['long-timeout', [longTimeout], 'timeout-exceeds-budget'],
     ['detached', [detached], 'fire-and-forget'],
     ['inconclusive', [undecided], null],
+    ['inconclusive', [longTimeout], null],
   ] as const)('gives %s for a single observation of that kind', (verdict, observations, findingKind) => {
     const result = combineSite(site, [ran(observations)]);
     expect(result).toMatchObject({ site, verdict, findingKind });
@@ -149,9 +159,20 @@ describe('combineSite for a fault that answers at once', () => {
   });
 
   it('is handled when every test handled the fault', () => {
-    const result = combineSite(site, [injected(refusedHandled), injected({ ...refusedHandled, attempts: 2 })], 'connection-refused');
-    expect(result).toMatchObject({ verdict: 'refusal-handled', findingKind: null, reason: 'every test handled the refused connection' });
+    const result = combineSite(site, [injected(refusedHandled), injected(refusedCaught)], 'connection-refused');
+    expect(result).toMatchObject({
+      verdict: 'refusal-handled',
+      findingKind: null,
+      reason:
+        'every test handled the refused connection: the caller handled the refused connection and the test passed; ' +
+        'the refused connection did not escape; the test failed on its own check: AssertionError: expected 1 to be 1.5',
+    });
     expect(result.tests[0]?.injected?.verdict.verdict).toBe('refusal-handled');
+  });
+
+  it('keeps the evidence of a handled verdict that every test shares', () => {
+    const result = combineSite(site, [injected(refusedCaught)], 'connection-refused');
+    expect(result.reason).toBe('the refused connection did not escape; the test failed on its own check: AssertionError: expected 1 to be 1.5');
   });
 
   it("reports a finding when any test mishandled it, with that test's reason", () => {
@@ -159,7 +180,7 @@ describe('combineSite for a fault that answers at once', () => {
     expect(result).toMatchObject({
       verdict: 'refusal-mishandled',
       findingKind: 'refusal-mishandled',
-      reason: 'the test failed after the connection was refused',
+      reason: "the refused connection's error escaped the code and failed the test: TypeError: fetch failed",
     });
   });
 

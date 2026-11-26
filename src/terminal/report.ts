@@ -1,6 +1,15 @@
-import { PRESETS } from '../core/index.js';
-import { exitCodeOf, LEVELS, type ExitOptions, type Finding, type RunResult } from '../orchestrator/index.js';
-import { findingDetails, plural, seconds, textSections, verdictLine, type TextSection } from '../reporter/text.js';
+import { exitCodeOf, type ExitOptions, type Finding, type RunResult } from '../orchestrator/index.js';
+import {
+  findingDetails,
+  findingsShown,
+  hiddenFindingsLine,
+  plural,
+  seconds,
+  textSections,
+  verdictLine,
+  type ReportOptions,
+  type TextSection,
+} from '../reporter/text.js';
 import { visibleLength } from './color.js';
 import type { Paint, Theme } from './theme.js';
 
@@ -12,8 +21,7 @@ function severityTag(finding: Finding, theme: Theme): string {
 }
 
 /** One line per finding that starts with path:line:col, which many terminals make clickable, and its reason under it. */
-function findingsSection(result: RunResult, theme: Theme): string[] {
-  const shown = PRESETS[LEVELS[result.level]].findingsShown;
+function findingsSection(result: RunResult, theme: Theme, shown: number): string[] {
   const lines = [theme.title('Findings, most severe first:')];
   for (const finding of result.findings.slice(0, shown)) {
     const name = finding.functionName === null ? '' : ` in ${finding.functionName}`;
@@ -21,7 +29,7 @@ function findingsSection(result: RunResult, theme: Theme): string[] {
     lines.push(...findingDetails(finding).map((line) => theme.dim(`${DETAIL}${line}`)));
   }
   const hidden = result.findings.length - shown;
-  if (hidden > 0) lines.push(theme.dim(`${INDENT}${plural(hidden, 'more finding')} not shown; --json lists every finding`));
+  if (hidden > 0) lines.push(theme.dim(`${INDENT}${hiddenFindingsLine(hidden)}`));
   return lines;
 }
 
@@ -110,10 +118,10 @@ function resultLine(result: RunResult, options: ExitOptions, theme: Theme): stri
 }
 
 /** The text report for a terminal: the plain report's content, with colour, one line per finding and a summary at the end. */
-export function renderFancyText(result: RunResult, options: ExitOptions, theme: Theme, width: number): string {
+export function renderFancyText(result: RunResult, options: ReportOptions, theme: Theme, width: number): string {
   const sections = textSections(result, options).flatMap((section): string[][] => {
     if (section.name === 'result') return [];
-    if (section.name === 'findings') return [findingsSection(result, theme)];
+    if (section.name === 'findings') return [findingsSection(result, theme, findingsShown(options))];
     return [styled(section, theme)];
   });
   const closing = result.status === 'error' ? [] : [box(summaryLines(result, theme), width, theme)];

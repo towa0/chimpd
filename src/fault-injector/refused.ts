@@ -23,6 +23,8 @@ export function refusedConnectionError(url: string): NodeJS.ErrnoException {
   return error;
 }
 
-export function refuseConnection(event: InjectedEvent): void {
-  event.controller.errorWith(refusedConnectionError(event.request.url));
+export function refuseConnection(event: InjectedEvent): Error {
+  const error = refusedConnectionError(event.request.url);
+  event.controller.errorWith(error);
+  return error;
 }

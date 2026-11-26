@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { threadId } from 'node:worker_threads';
 import { realClearTimeout, realNow, realSetTimeout } from '../core/clock.js';
-import type { TestOutcome } from '../core/types.js';
+import type { FailureEvidence, TestOutcome } from '../core/types.js';
 import type { RequestObservation } from '../fault-injector/blackhole.js';
 import { installCallCapture, type CallMetadata } from '../fault-injector/call-capture.js';
 import { installBlackHole } from '../fault-injector/interception.js';
@@ -40,12 +40,16 @@ export interface BodyReport {
   readonly observations: readonly HeldObservation[];
   readonly injections?: readonly InjectedCall[];
   readonly jsonParsed?: boolean;
+  readonly failure?: FailureEvidence | null;
 }
+
+/** How a test body ended: with the error it threw, or without one. */
+export type BodyEnding = { readonly threw: false } | { readonly threw: true; readonly error: unknown };
 
 export interface Session {
   includes(task: RunnerTask): boolean;
   begin(current: TestBody): void;
-  end(current: TestBody): BodyReport | Promise<BodyReport>;
+  end(current: TestBody, ending: BodyEnding): BodyReport | Promise<BodyReport>;
   dispose(): void;
 }
 
@@ -174,7 +178,11 @@ export function startRuntime(hooks: RuntimeHooks, config: RuntimeConfig): void {
       ? startRecon(write)
       : mode.faultKind === 'blackhole'
         ? startFault(mode)
-        : startInjection(mode, () => body.getStore());
+        : startInjection(
+            mode,
+            () => body.getStore(),
+            (owner, failure) => write({ type: 'escaped', testId: owner.testId, failure }),
+          );
   const guard = createPatchGuard(config.pristine);
 
   async function runBody(current: TestBody, fn: () => unknown): Promise<unknown> {
@@ -182,12 +190,16 @@ export function startRuntime(hooks: RuntimeHooks, config: RuntimeConfig): void {
     session.begin(current);
     const startedAt = realNow();
     let outcome: TestOutcome = 'failed';
+    let ending: BodyEnding = { threw: false };
     try {
       const value = await body.run(current, fn);
       outcome = 'passed';
       return value;
+    } catch (error) {
+      ending = { threw: true, error };
+      throw error;
     } finally {
-      const report = await session.end(current);
+      const report = await session.end(current, ending);
       const changed = guard.changed();
       if (changed.length > 0) write({ type: 'conflict', ...current, patched: changed });
       write({ type: 'body-end', ...current, outcome, durationMs: realNow() - startedAt, ...report });

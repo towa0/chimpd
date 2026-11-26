@@ -1,9 +1,10 @@
 import type { InjectedObservation, InjectedVerdict } from '../core/index.js';
+import { escapedReason, notEscapedBecause, unattributedReason } from './evidence.js';
 
 const MISHANDLED = { verdict: 'parse-mishandled', findingKind: 'malformed-json-mishandled' } as const;
 
 export function classifyMalformedJson(observation: InjectedObservation): InjectedVerdict {
-  const { attempts } = observation;
+  const { attempts, failure } = observation;
   if (attempts === 0) return { verdict: 'inconclusive', findingKind: null, reason: 'no call to the site got the malformed body' };
   if (observation.jsonParsed !== true) {
     return {
@@ -12,8 +13,13 @@ export function classifyMalformedJson(observation: InjectedObservation): Injecte
       reason: 'the code never parsed the response as JSON, so malformed-json does not apply',
     };
   }
-  if (observation.errorEscaped) return { ...MISHANDLED, reason: 'the parse error escaped as an unhandled rejection or error event' };
-  if (observation.testOutcome === 'failed') return { ...MISHANDLED, reason: 'the test failed after the JSON body could not be parsed' };
   const retried = attempts === 1 ? '' : ` after ${attempts} attempts`;
-  return { verdict: 'parse-handled', findingKind: null, reason: `the code caught the parse error${retried} and the test passed` };
+  if (failure === null) {
+    return { verdict: 'parse-handled', findingKind: null, reason: `the code caught the parse error${retried} and the test passed` };
+  }
+  if (failure.kind === 'fault-escaped') return { ...MISHANDLED, reason: escapedReason('the JSON parse error', failure) };
+  if (failure.kind === 'unattributed') {
+    return { verdict: 'inconclusive', findingKind: null, reason: unattributedReason('the JSON parse error', failure) };
+  }
+  return { verdict: 'parse-handled', findingKind: null, reason: `the JSON parse error did not escape${retried}; ${notEscapedBecause(failure)}` };
 }

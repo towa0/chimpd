@@ -1,10 +1,26 @@
-import { firstErrorLine, PRESETS } from '../core/index.js';
+import { firstErrorLine, otherCallers, PRESETS } from '../core/index.js';
 import type { BaselineEntry } from '../baseline/index.js';
 import { exitCodeOf, LEVELS, type ExitOptions, type Finding, type Item, type PhaseReport, type RunResult } from '../orchestrator/index.js';
 import { perFaultRunMs, perMutantMs } from '../timings/index.js';
 
 const INDENT = '  ';
 const SHORT_SHA = 7;
+
+/** How many findings the text report lists unless asked for all of them. */
+export const FINDINGS_SHOWN = 20;
+
+export interface ReportOptions extends ExitOptions {
+  /** List every finding instead of the first FINDINGS_SHOWN. */
+  readonly allFindings?: boolean;
+}
+
+export function findingsShown(options: ReportOptions): number {
+  return options.allFindings === true ? Number.POSITIVE_INFINITY : FINDINGS_SHOWN;
+}
+
+export function hiddenFindingsLine(hidden: number): string {
+  return `${plural(hidden, 'more finding')} not shown; --all-findings or --json lists every finding`;
+}
 
 export function seconds(ms: number): string {
   return `${(ms / 1000).toFixed(1)} s`;
@@ -158,7 +174,8 @@ export function findingDetails(finding: Finding): string[] {
   if (finding.fault !== null) {
     const under = finding.fault.tests.length > 0 ? ` under: ${finding.fault.tests.join('; ')}` : '';
     lines.push(`faulted with ${finding.fault.kind}${under}`);
-    if (finding.fault.reachedFrom.length > 0) lines.push(`reached from changed code: ${finding.fault.reachedFrom.join(', ')}`);
+    const callers = otherCallers(finding.fault.reachedFrom, finding);
+    if (callers.length > 0) lines.push(`reached from changed code: ${callers.join(', ')}`);
     if (finding.fault.notFaultedFrom.length > 0) {
       lines.push(`also reached from ${finding.fault.notFaultedFrom.join(', ')}, not faulted at this level`);
     }
@@ -181,7 +198,7 @@ function findingsSection(result: RunResult, shown: number): string[] {
   const lines = ['Findings, most severe first:'];
   result.findings.slice(0, shown).forEach((finding, index) => lines.push(...findingLines(finding, index + 1)));
   const hidden = result.findings.length - shown;
-  if (hidden > 0) lines.push(`${INDENT}${plural(hidden, 'more finding')} not shown; --json lists every finding`);
+  if (hidden > 0) lines.push(`${INDENT}${hiddenFindingsLine(hidden)}`);
   return lines;
 }
 
@@ -286,11 +303,11 @@ export type SectionName =
   | 'error'
   | 'scope'
   | 'coverage'
-  | 'invalid'
   | 'findings'
   | 'ignored'
   | 'baseline'
   | 'skipped'
+  | 'invalid'
   | 'inconclusive'
   | 'conflicts'
   | 'phases'
@@ -302,18 +319,17 @@ export interface TextSection {
 }
 
 /** The report's sections in order, empty ones left out; the plain report joins them with a blank line. */
-export function textSections(result: RunResult, options: ExitOptions = {}): TextSection[] {
-  const shown = PRESETS[LEVELS[result.level]].findingsShown;
+export function textSections(result: RunResult, options: ReportOptions = {}): TextSection[] {
   const sections: TextSection[] = [
     { name: 'header', lines: header(result) },
     { name: 'error', lines: result.status === 'error' ? [`Error: ${firstErrorLine(result.error) ?? 'unknown error'}`] : [] },
     { name: 'scope', lines: scopeSection(result) },
     { name: 'coverage', lines: coverageSection(result) },
-    { name: 'invalid', lines: groupedSection('Invalid mutants', result.invalid, (entry) => entry.reason) },
-    { name: 'findings', lines: findingsSection(result, shown) },
+    { name: 'findings', lines: findingsSection(result, findingsShown(options)) },
     { name: 'ignored', lines: ignoredSection(result) },
     { name: 'baseline', lines: baselineSection(result) },
     { name: 'skipped', lines: groupedSection('Skipped', result.skipped, (entry) => `${sourceOf(entry)}: ${entry.reason}`) },
+    { name: 'invalid', lines: groupedSection('Invalid mutants', result.invalid, (entry) => entry.reason) },
     { name: 'inconclusive', lines: inconclusiveSection(result.inconclusive) },
     { name: 'conflicts', lines: conflictSection(result) },
     { name: 'phases', lines: phaseSection(result) },
@@ -322,6 +338,6 @@ export function textSections(result: RunResult, options: ExitOptions = {}): Text
   return sections.filter((section) => section.lines.length > 0);
 }
 
-export function renderText(result: RunResult, options: ExitOptions = {}): string {
+export function renderText(result: RunResult, options: ReportOptions = {}): string {
   return `${textSections(result, options).map((section) => section.lines.join('\n')).join('\n\n')}\n`;
 }

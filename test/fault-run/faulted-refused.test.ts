@@ -8,6 +8,7 @@ import { discoverCallSites } from '../../src/fault-run/discover.js';
 import { runFaultedSite, type SiteRun } from '../../src/fault-run/faulted.js';
 import type { CallSite, Discovery } from '../../src/fault-run/types.js';
 import { addCrashOnFaultModule, addPairModule, addSetupFailureModule } from '../helpers/fault-fixtures.js';
+import { failureLike } from '../helpers/failure-evidence.js';
 import { createSampleApp, history, type SampleApp } from '../helpers/sample-app.js';
 
 const TIMEOUT_MS = 60_000;
@@ -68,12 +69,12 @@ describe('connection-refused runs on the sample app', () => {
   afterAll(() => app.cleanup());
 
   it.each([
-    ['a fetch whose caller catches the error', 'src/clients/inventory.ts', 'await fetch(', { attempts: 1, testOutcome: 'passed', errorEscaped: false }],
-    ['a fetch whose error fails the test', 'src/clients/profile.ts', 'await fetch(', { attempts: 1, testOutcome: 'failed', errorEscaped: false }],
-    ['an http request whose error listener rejects', 'src/clients/ledger.ts', 'http.request(', { attempts: 1, errorReachedCaller: true, testOutcome: 'failed' }],
-    ['an unawaited fetch whose rejection escapes', 'src/clients/audit.ts', 'void fetch(', { attempts: 1, testOutcome: 'passed', errorEscaped: true }],
-    ['a fire-and-forget fetch that catches its error', 'src/telemetry.ts', 'void fetch(', { attempts: 1, testOutcome: 'passed', errorEscaped: false }],
-    ['a search that retries before giving up', 'src/clients/search.ts', 'await fetch(', { attempts: 3, testOutcome: 'passed', errorEscaped: false }],
+    ['a fetch whose caller catches the error', 'src/clients/inventory.ts', 'await fetch(', { attempts: 1, testOutcome: 'passed', failure: null }],
+    ['a fetch whose error fails the test', 'src/clients/profile.ts', 'await fetch(', { attempts: 1, testOutcome: 'failed', failure: { kind: 'fault-escaped', via: 'test', error: 'TypeError: fetch failed', raisedAt: null } }],
+    ['an http request whose error listener rejects', 'src/clients/ledger.ts', 'http.request(', { attempts: 1, errorReachedCaller: true, testOutcome: 'failed', failure: failureLike({ kind: 'fault-escaped', via: 'test' }) }],
+    ['an unawaited fetch whose rejection escapes', 'src/clients/audit.ts', 'void fetch(', { attempts: 1, testOutcome: 'passed', failure: failureLike({ kind: 'fault-escaped', via: 'unhandled' }) }],
+    ['a fire-and-forget fetch that catches its error', 'src/telemetry.ts', 'void fetch(', { attempts: 1, testOutcome: 'passed', failure: null }],
+    ['a search that retries before giving up', 'src/clients/search.ts', 'await fetch(', { attempts: 3, testOutcome: 'passed', failure: null }],
   ] as const)(
     'observes %s',
     async (_label, file, snippet, expected) => {
@@ -108,7 +109,7 @@ describe('connection-refused run boundaries', () => {
       const test = run.tests.find((entry) => entry.test.name === 'calls both dependencies');
       // The beforeEach hook reaches the same site and must get its real answer for the test to pass.
       expect(test?.problem).toBeNull();
-      expect(test?.injected).toMatchObject({ attempts: 1, testOutcome: 'passed', errorEscaped: false });
+      expect(test?.injected).toMatchObject({ attempts: 1, testOutcome: 'passed', failure: null });
     },
     TIMEOUT_MS,
   );
